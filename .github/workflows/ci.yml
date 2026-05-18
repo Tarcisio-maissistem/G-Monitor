@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gmonitor
+          POSTGRES_PASSWORD: gmonitor
+          POSTGRES_DB: gmonitor_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gmonitor"
+          --health-interval 5s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @gmonitor/backend prisma generate
+        env:
+          DATABASE_URL: postgresql://gmonitor:gmonitor@localhost:5432/gmonitor_test
+
+      - name: Type-check
+        run: pnpm type-check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://gmonitor:gmonitor@localhost:5432/gmonitor_test
+          REDIS_URL: redis://localhost:6379
+          JWT_ACCESS_SECRET: ci-access-secret-must-be-at-least-32-chars
+          JWT_REFRESH_SECRET: ci-refresh-secret-must-be-at-least-32-c
+          AGENT_TOKEN_SECRET: ci-agent-secret-must-be-at-least-32-cha

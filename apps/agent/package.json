@@ -1,0 +1,36 @@
+{
+  "name": "@gmonitor/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "package": "pkg . --targets node20-win-x64 --output release/gmonitor-agent.exe"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": ["catalog/**/*"]
+  },
+  "dependencies": {
+    "@gmonitor/rpc-contracts": "workspace:*",
+    "@gmonitor/shared": "workspace:*",
+    "better-sqlite3": "^11.7.0",
+    "msgpackr": "^1.11.2",
+    "node-firebird": "^1.1.9",
+    "pino": "^9.6.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
+    "@yao-pkg/pkg": "^6.1.1"
+  }
+}

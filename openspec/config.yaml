@@ -1,0 +1,53 @@
+schema: spec-driven
+
+context: |
+  Product: G-Monitor — plataforma SaaS multi-tenant de BI/dashboard gerencial
+  para varejistas que utilizam o ERP/PDV GDOOR PRO (banco Firebird local).
+
+  Arquitetura:
+  - SaaS hospedado em VPS (Linux, Docker Compose ou Kubernetes leve)
+  - Agente Windows leve instalado na máquina da loja (mesma máquina do Firebird)
+  - Comunicação outbound do agente para SaaS via WebSocket TLS persistente
+  - Sem porta aberta na loja, sem ngrok/cloudflared
+  - Banco da SaaS: PostgreSQL (multi-tenant), Redis (cache + pub/sub + filas)
+  - Frontend: React + Vite + Tailwind, servido por CDN ou pelo backend
+
+  Stack:
+  - Backend SaaS: Node.js 20 + TypeScript + Fastify + Prisma + BullMQ
+  - Agente: Node.js 20 + TypeScript empacotado com pkg, instalado via NSSM
+  - Driver Firebird: node-firebird (binário nativo, prepared statements)
+  - Auth: JWT access + refresh, 2FA TOTP opcional, token long-lived por agente
+  - Observabilidade: pino + Loki + Prometheus + Grafana
+
+  Modelo multi-tenant:
+  - Isolamento por tenant_id em todas as tabelas
+  - Row Level Security (RLS) no Postgres
+  - 1 tenant pode ter N lojas, 1 loja = 1 agente
+  - Usuários pertencem a 1 tenant com papéis (owner, admin, gestor, operador, leitor)
+
+  Compliance:
+  - LGPD: dados em região BR, criptografia em repouso, contrato de processamento
+  - Auditoria completa de mudanças sensíveis (metas, taxas, permissões)
+
+  Convenções:
+  - Linguagem: português para conteúdo de produto, inglês para identificadores técnicos
+  - Specs descrevem comportamento observável, não implementação
+  - Implementação detalhada vai em design.md e tasks.md
+  - SQL no agente: sempre prepared statements, nunca string concatenation
+  - Cross-platform: agente é Windows-only, backend é Linux
+
+rules:
+  specs:
+    - Requisitos descrevem comportamento de produto e contratos observáveis
+    - Detalhes de mecanismo interno ficam em design.md, não em spec.md
+    - Cenários cobrem caso feliz, erro previsível e edge case relevante
+    - Multi-tenant: todo requisito que toca dados deve mencionar isolamento
+    - Segurança: requisitos que envolvem segredos devem mencionar onde são armazenados
+  tasks:
+    - Inclua tarefa de teste para cada requirement crítico
+    - Inclua tarefa de migração de banco quando schema mudar
+    - Inclua tarefa de documentação de API quando novo endpoint público
+  design:
+    - Documente decisões com trade-offs explícitos
+    - Mantenha diagramas em ASCII ou Mermaid dentro do markdown
+    - Liste alternativas consideradas e por que foram rejeitadas

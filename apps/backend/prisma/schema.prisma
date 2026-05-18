@@ -1,0 +1,413 @@
+// G-Monitor — schema multi-tenant com RLS.
+// Tabelas operacionais e administrativas em um unico schema, isoladas por tenant_id.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenants e usuarios ─────────────────────────────────────────────────────
+
+model Tenant {
+  id                 String   @id @default(cuid())
+  name               String
+  cnpj               String?  @unique
+  phone              String?
+  plan               Plan     @default(starter)
+  subscriptionStatus SubStatus @default(trialing)
+  stripeCustomerId   String?  @unique
+  meta               Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  deletedAt          DateTime?
+
+  users              User[]
+  stores             Store[]
+  agents             Agent[]
+  subscriptions      Subscription[]
+  invitations        Invitation[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  notificationRules  NotificationRule[]
+
+  @@map("tenants")
+}
+
+enum Plan {
+  starter
+  business
+  enterprise
+}
+
+enum SubStatus {
+  trialing
+  active
+  past_due
+  suspended
+  cancelled
+}
+
+model User {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  email             String
+  passwordHash      String
+  name              String
+  role              Role     @default(leitor)
+  storeId           String?
+  store             Store?   @relation(fields: [storeId], references: [id])
+  twoFactorSecret   String?  // encriptado em repouso
+  twoFactorEnabled  Boolean  @default(false)
+  emailVerifiedAt   DateTime?
+  lastLoginAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+
+  refreshTokens     RefreshToken[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  notificationPreferences NotificationPreference[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+enum Role {
+  owner
+  admin
+  gestor
+  operador
+  leitor
+}
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  tokenHash   String   @unique
+  parentId    String?  // detecta reuso quando rotacionado
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  usedAt      DateTime?
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Invitation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  email     String
+  role      Role
+  storeId   String?
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  acceptedAt DateTime?
+
+  @@index([tenantId])
+  @@map("invitations")
+}
+
+// ─── Lojas e agentes ────────────────────────────────────────────────────────
+
+model Store {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  name       String
+  externalId String   // identificador interno (ex: codigo PDV)
+  timezone   String   @default("America/Sao_Paulo")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  users      User[]
+  agents     Agent[]
+  sales      Sale[]
+  saleItems  SaleItem[]
+  payments   Payment[]
+  customers  Customer[]
+  products   Product[]
+  cashClosings CashClosing[]
+  syncState  SyncState[]
+
+  @@unique([tenantId, externalId])
+  @@index([tenantId])
+  @@map("stores")
+}
+
+model Agent {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id])
+  tokenHash     String   @unique
+  channel       ReleaseChannel @default(stable)
+  agentVersion  String?
+  firebirdVersion String?
+  os            String?
+  lastSeenAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  revokedAt     DateTime?
+
+  sessions      AgentSession[]
+
+  @@index([tenantId])
+  @@index([storeId])
+  @@map("agents")
+}
+
+enum ReleaseChannel {
+  stable
+  beta
+  canary
+}
+
+model AgentSession {
+  id              String   @id @default(cuid())
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id])
+  connectedAt     DateTime @default(now())
+  disconnectedAt  DateTime?
+  ip              String?
+  protocolVersion String?
+
+  @@index([agentId])
+  @@map("agent_sessions")
+}
+
+// ─── Dados operacionais sincronizados do Firebird ──────────────────────────
+
+model SyncState {
+  id        String   @id @default(cuid())
+  tenantId  String
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id])
+  tableName String
+  checkpoint String  // ID maior ou timestamp ISO ja sincronizado
+  rowsSynced Int     @default(0)
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([tenantId, storeId, tableName])
+  @@index([tenantId])
+  @@map("sync_state")
+}
+
+model Sale {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  sourceId    String   // ID original no Firebird
+  saleDate    DateTime
+  customerSourceId String?
+  operatorName String?
+  caixa       String?
+  modelo      String?
+  natureza    String?
+  totalValue  Decimal  @db.Decimal(14, 2)
+  cancelled   Boolean  @default(false)
+  processed   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       SaleItem[]
+  payments    Payment[]
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, saleDate])
+  @@map("sales")
+}
+
+model SaleItem {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  saleId      String
+  sale        Sale     @relation(fields: [saleId], references: [id])
+  sourceId    String
+  productCode String?
+  description String?
+  quantity    Decimal  @db.Decimal(14, 3)
+  unitValue   Decimal  @db.Decimal(14, 4)
+  totalValue  Decimal  @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([saleId])
+  @@map("sale_items")
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  saleId      String?
+  sale        Sale?    @relation(fields: [saleId], references: [id])
+  sourceId    String
+  paymentDate DateTime
+  paymentType String   // PIX, CARTAO, CREDIARIO, DINHEIRO, OUTROS
+  especie     String?  // valor bruto vindo do GDOOR
+  value       Decimal  @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, paymentDate])
+  @@map("payments")
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  sourceId    String
+  name        String?
+  document    String?  // CPF/CNPJ
+  phone       String?
+  email       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId])
+  @@map("customers")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  sourceCode  String
+  description String
+  unit        String?
+  stock       Decimal? @db.Decimal(14, 3)
+  costPrice   Decimal? @db.Decimal(14, 4)
+  salePrice   Decimal? @db.Decimal(14, 4)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, storeId, sourceCode])
+  @@index([tenantId, storeId])
+  @@map("products")
+}
+
+model CashClosing {
+  id            String   @id @default(cuid())
+  tenantId      String
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id])
+  sourceId      String
+  openedAt      DateTime
+  closedAt      DateTime?
+  operatorName  String?
+  totalExpected Decimal? @db.Decimal(14, 2)
+  totalCounted  Decimal? @db.Decimal(14, 2)
+  difference    Decimal? @db.Decimal(14, 2)
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, openedAt])
+  @@map("cash_closings")
+}
+
+// ─── Audit + notifications + billing ────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String?
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entity])
+  @@map("audit_logs")
+}
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  stripeSubscriptionId String   @unique
+  status               String
+  plan                 Plan
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("subscriptions")
+}
+
+model NotificationRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  ruleType  String
+  enabled   Boolean  @default(true)
+  config    Json     @default("{}")
+  cooldownMinutes Int @default(240)
+  lastTriggeredAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, ruleType])
+  @@map("notification_rules")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  emailSent Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, userId, readAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  channelInApp Boolean @default(true)
+  channelEmail Boolean @default(true)
+
+  @@unique([userId, type])
+  @@map("notification_preferences")
+}

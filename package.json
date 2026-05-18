@@ -1,0 +1,39 @@
+{
+  "name": "g-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "type-check": "pnpm -r run type-check",
+    "db:migrate": "pnpm --filter @gmonitor/backend prisma migrate dev",
+    "db:generate": "pnpm --filter @gmonitor/backend prisma generate",
+    "db:studio": "pnpm --filter @gmonitor/backend prisma studio",
+    "docker:up": "docker compose -f docker/docker-compose.dev.yml up -d",
+    "docker:down": "docker compose -f docker/docker-compose.dev.yml down",
+    "docker:logs": "docker compose -f docker/docker-compose.dev.yml logs -f"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.8",
+    "eslint": "^9.18.0",
+    "@typescript-eslint/eslint-plugin": "^8.21.0",
+    "@typescript-eslint/parser": "^8.21.0",
+    "prettier": "^3.4.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.1"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": ["prettier --write", "eslint --fix"],
+    "*.{md,yml,json}": ["prettier --write"]
+  }
+}
