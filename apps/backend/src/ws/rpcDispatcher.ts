@@ -38,7 +38,7 @@ export async function callAgent<T = unknown>(
   timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
 ): Promise<T> {
   const ws = getLocalAgent(agentId);
-  if (!ws || ws.readyState !== ws.OPEN) {
+  if (!ws || ws.readyState !== 1 /* WebSocket.OPEN */) {
     throw Errors.serviceUnavailable('Agente offline');
   }
 

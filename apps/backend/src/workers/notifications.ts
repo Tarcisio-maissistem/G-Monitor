@@ -1,4 +1,6 @@
 import { Queue, Worker } from 'bullmq';
+import type { ConnectionOptions } from 'bullmq';
+import type { Prisma } from '@prisma/client';
 import { redis } from '../db/redis.js';
 import { prisma } from '../db/prisma.js';
 import { logger } from '../logger.js';
@@ -6,7 +8,8 @@ import { logger } from '../logger.js';
 // Worker BullMQ que avalia regras de notificacao a cada tick (5min).
 // Cada regra: ruleType -> implementacao da avaliacao.
 
-export const notificationQueue = new Queue('notifications-eval', { connection: redis });
+const redisConn = redis as unknown as ConnectionOptions;
+export const notificationQueue = new Queue('notifications-eval', { connection: redisConn });
 
 const RULES: Record<string, (tenantId: string) => Promise<NotificationOutcome | null>> = {
   agent_offline: async (tenantId) => {
@@ -40,7 +43,7 @@ interface NotificationOutcome {
 
 new Worker(
   'notifications-eval',
-  async (job) => {
+  async (_job) => {
     const tenants = await prisma.tenant.findMany({
       where: { subscriptionStatus: { in: ['trialing', 'active'] } },
       include: { notificationRules: { where: { enabled: true } } },
@@ -76,7 +79,7 @@ new Worker(
               type: outcome.type,
               title: outcome.title,
               body: outcome.body,
-              data: outcome.data,
+              data: outcome.data as unknown as Prisma.InputJsonValue,
             })),
           }),
           prisma.notificationRule.update({
@@ -91,7 +94,7 @@ new Worker(
 
     return { tenantsProcessed: tenants.length };
   },
-  { connection: redis, concurrency: 1 },
+  { connection: redisConn, concurrency: 1 },
 );
 
 // Repeat job a cada 5 min.

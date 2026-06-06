@@ -8,7 +8,7 @@ import { signAccess } from '../auth/jwt.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // Lista todos os tenants com contagem de agentes
-  app.get('/api/admin/tenants', { preHandler: [requireAuth, requireSuperAdmin] }, async (req) => {
+  app.get('/api/admin/tenants', { preHandler: [requireAuth, requireSuperAdmin] }, async (_req) => {
     const tenants = await prisma.tenant.findMany({
       where: { deletedAt: null },
       orderBy: { createdAt: 'desc' },

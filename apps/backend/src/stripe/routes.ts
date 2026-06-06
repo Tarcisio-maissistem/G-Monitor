@@ -27,13 +27,14 @@ export async function stripeRoutes(app: FastifyInstance): Promise<void> {
       if (!tenant) throw Errors.notFound();
 
       const stripe = getStripe();
+      const corsOrigin = config.CORS_ORIGIN.split(',')[0]!.trim();
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         line_items: [{ price, quantity: 1 }],
-        customer: tenant.stripeCustomerId ?? undefined,
+        ...(tenant.stripeCustomerId ? { customer: tenant.stripeCustomerId } : {}),
         client_reference_id: tenant.id,
-        success_url: `${config.CORS_ORIGIN}/billing?ok=1`,
-        cancel_url: `${config.CORS_ORIGIN}/billing?cancel=1`,
+        success_url: `${corsOrigin}/billing?ok=1`,
+        cancel_url: `${corsOrigin}/billing?cancel=1`,
         metadata: { tenantId: tenant.id, plan: body.plan },
       });
 
@@ -48,9 +49,10 @@ export async function stripeRoutes(app: FastifyInstance): Promise<void> {
       const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId } });
       if (!tenant?.stripeCustomerId) throw Errors.validation('Sem assinatura Stripe');
       const stripe = getStripe();
+      const corsOrigin = config.CORS_ORIGIN.split(',')[0]!.trim();
       const session = await stripe.billingPortal.sessions.create({
         customer: tenant.stripeCustomerId,
-        return_url: `${config.CORS_ORIGIN}/billing`,
+        return_url: `${corsOrigin}/billing`,
       });
       return { url: session.url };
     },

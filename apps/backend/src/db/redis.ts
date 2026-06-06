@@ -7,5 +7,5 @@ export const redis = new Redis(config.REDIS_URL, {
   maxRetriesPerRequest: null, // BullMQ exige null
 });
 
-redis.on('error', (err) => logger.error({ err }, 'redis error'));
+redis.on('error', (err: Error) => logger.error({ err }, 'redis error'));
 redis.on('connect', () => logger.info('redis connected'));

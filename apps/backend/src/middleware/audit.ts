@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { logger } from '../logger.js';
 
@@ -21,7 +22,7 @@ export function audit(opts: AuditOptions) {
             action: opts.action,
             entity: opts.entity ?? null,
             entityId: (req.params as { id?: string })?.id ?? null,
-            after: opts.captureBody ? (req.body as object) : null,
+            ...(opts.captureBody ? { after: req.body as unknown as Prisma.InputJsonValue } : {}),
             ip: req.ip,
             userAgent: req.headers['user-agent'] ?? null,
           },

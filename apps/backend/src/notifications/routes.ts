@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -46,10 +47,14 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         tenantId: req.user!.tenantId,
         ruleType,
         enabled: body.enabled ?? true,
-        config: body.config ?? {},
+        config: (body.config ?? {}) as unknown as Prisma.InputJsonValue,
         cooldownMinutes: body.cooldownMinutes ?? 240,
       },
-      update: body,
+      update: {
+        ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        ...(body.config !== undefined ? { config: body.config as Prisma.InputJsonValue } : {}),
+        ...(body.cooldownMinutes !== undefined ? { cooldownMinutes: body.cooldownMinutes } : {}),
+      },
     });
     return { rule };
   });

@@ -4,14 +4,14 @@ import { messageEnvelopeSchema, PROTOCOL_VERSION, WS_CLOSE_CODES } from '@gmonit
 import { prisma } from '../db/prisma.js';
 import { hashToken } from '../auth/tokens.js';
 import { logger } from '../logger.js';
-import { registerAgent } from './registry.js';
+import { registerAgent, type WsSocket } from './registry.js';
 import { resolvePendingRpc } from './rpcDispatcher.js';
 
 // WebSocket de agente: rota /ws/agent.
 // Handshake: Bearer token no header Authorization. Token long-lived por agente.
 export async function registerAgentWs(app: FastifyInstance): Promise<void> {
   app.get('/ws/agent', { websocket: true }, async (socket, req) => {
-    const ws = socket as unknown as import('ws').WebSocket;
+    const ws = socket as unknown as WsSocket;
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer ')) {
       ws.close(WS_CLOSE_CODES.AUTH_FAILED, 'missing_token');
@@ -57,7 +57,11 @@ export async function registerAgentWs(app: FastifyInstance): Promise<void> {
       }
 
       if (parsed.data.type === 'response') {
-        resolvePendingRpc(parsed.data.requestId, parsed.data);
+        resolvePendingRpc(parsed.data.requestId, {
+          ok: parsed.data.ok,
+          result: parsed.data.result,
+          ...(parsed.data.error ? { error: { code: parsed.data.error.code, message: parsed.data.error.message } } : {}),
+        });
       } else if (parsed.data.type === 'event') {
         logger.info({ agentId: agent.id, event: parsed.data.name }, 'agent event');
       } else if (parsed.data.type === 'request') {

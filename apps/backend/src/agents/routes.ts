@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { audit } from '../middleware/audit.js';
 import { generateAgentToken, hashToken } from '../auth/tokens.js';
 import { v4 as uuid } from 'uuid';
 import { callAgent } from '../ws/rpcDispatcher.js';
@@ -24,7 +25,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Cria agente novo (gera token). Token aparece UMA UNICA VEZ na resposta.
-  app.post('/api/agents', { preHandler: [requireAuth, requireCapability('agent.rotate')] }, async (req, reply) => {
+  app.post('/api/agents', { preHandler: [requireAuth, requireCapability('agent.rotate'), audit({ action: 'agent.create', entity: 'agent', captureBody: true })] }, async (req, reply) => {
     const body = createAgentSchema.parse(req.body);
     const store = await prisma.store.findFirst({
       where: { id: body.storeId, tenantId: req.user!.tenantId, deletedAt: null },
@@ -51,7 +52,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Revoga agente
-  app.delete('/api/agents/:id', { preHandler: [requireAuth, requireCapability('agent.revoke')] }, async (req) => {
+  app.delete('/api/agents/:id', { preHandler: [requireAuth, requireCapability('agent.revoke'), audit({ action: 'agent.revoke', entity: 'agent' })] }, async (req) => {
     const { id } = req.params as { id: string };
     await prisma.agent.updateMany({
       where: { id, tenantId: req.user!.tenantId },

@@ -1,4 +1,3 @@
-import type { WebSocket } from 'ws';
 import { redis } from '../db/redis.js';
 import { logger } from '../logger.js';
 
@@ -6,10 +5,20 @@ import { logger } from '../logger.js';
 // Local: in-memory para resposta rapida.
 // Cross-instance: Redis pub/sub para enrutar RPCs entre instancias do backend.
 
-const localConnections = new Map<string, WebSocket>();
+// Interface minima — evita importar 'ws' como dep transitiva.
+export interface WsSocket {
+  readonly readyState: number;
+  close(code?: number, reason?: string | Buffer): void;
+  on(event: 'message', listener: (data: Buffer) => void | Promise<void>): WsSocket;
+  on(event: 'close', listener: (code: number, reason: Buffer) => void): WsSocket;
+  on(event: string, listener: (...args: never[]) => void): WsSocket;
+  send(data: Uint8Array | string): void;
+}
+
+const localConnections = new Map<string, WsSocket>();
 const INSTANCE_ID = `inst_${process.pid}_${Date.now()}`;
 
-export function registerAgent(agentId: string, ws: WebSocket): void {
+export function registerAgent(agentId: string, ws: WsSocket): void {
   const existing = localConnections.get(agentId);
   if (existing && existing !== ws) {
     existing.close(4403, 'replaced_by_new_session');
@@ -27,7 +36,7 @@ export function registerAgent(agentId: string, ws: WebSocket): void {
   logger.info({ agentId }, 'agent registered');
 }
 
-export function getLocalAgent(agentId: string): WebSocket | undefined {
+export function getLocalAgent(agentId: string): WsSocket | undefined {
   return localConnections.get(agentId);
 }
 

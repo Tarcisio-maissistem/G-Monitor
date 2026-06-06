@@ -74,9 +74,156 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             persisted++;
           }
           break;
-        // Outras tabelas seguem padrao similar. Implementacao por iteracao.
+        case 'saleItems': {
+          // Monta mapa saleSourceId -> sale.id para resolver FK em batch
+          const saleSourceIds = [...new Set(body.rows.map((r) => String(r.saleSourceId)).filter(Boolean))];
+          const parentSales = await tx.sale.findMany({
+            where: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: { in: saleSourceIds } },
+            select: { id: true, sourceId: true },
+          });
+          const saleMap = new Map(parentSales.map((s) => [s.sourceId, s.id]));
+
+          for (const r of body.rows) {
+            const saleId = saleMap.get(String(r.saleSourceId));
+            if (!saleId) continue; // venda pai ainda nao sincronizada
+            await tx.saleItem.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                saleId,
+                sourceId: String(r.sourceId),
+                productCode: r.productCode ? String(r.productCode) : null,
+                description: r.description ? String(r.description) : null,
+                quantity: Number(r.quantity ?? 0),
+                unitValue: Number(r.unitValue ?? 0),
+                totalValue: Number(r.totalValue ?? 0),
+              },
+              update: {
+                quantity: Number(r.quantity ?? 0),
+                unitValue: Number(r.unitValue ?? 0),
+                totalValue: Number(r.totalValue ?? 0),
+              },
+            });
+            persisted++;
+          }
+          break;
+        }
+
+        case 'payments': {
+          // saleId e opcional; tenta resolver pelo sourceId da venda se enviado
+          const saleSourceIds = [...new Set(body.rows.map((r) => r.saleSourceId ? String(r.saleSourceId) : null).filter(Boolean))] as string[];
+          const parentSales = saleSourceIds.length
+            ? await tx.sale.findMany({
+                where: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: { in: saleSourceIds } },
+                select: { id: true, sourceId: true },
+              })
+            : [];
+          const saleMap = new Map(parentSales.map((s) => [s.sourceId, s.id]));
+
+          for (const r of body.rows) {
+            const saleId = r.saleSourceId ? (saleMap.get(String(r.saleSourceId)) ?? null) : null;
+            await tx.payment.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceId: String(r.sourceId),
+                saleId,
+                paymentDate: new Date(String(r.paymentDate)),
+                paymentType: String(r.paymentType ?? 'OUTROS'),
+                especie: r.especie ? String(r.especie) : null,
+                value: Number(r.value ?? 0),
+              },
+              update: {
+                paymentDate: new Date(String(r.paymentDate)),
+                paymentType: String(r.paymentType ?? 'OUTROS'),
+                value: Number(r.value ?? 0),
+              },
+            });
+            persisted++;
+          }
+          break;
+        }
+
+        case 'customers':
+          for (const r of body.rows) {
+            await tx.customer.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceId: String(r.sourceId),
+                name: r.name ? String(r.name) : null,
+                document: r.document ? String(r.document) : null,
+                phone: r.phone ? String(r.phone) : null,
+                email: r.email ? String(r.email) : null,
+              },
+              update: {
+                name: r.name ? String(r.name) : null,
+                document: r.document ? String(r.document) : null,
+                phone: r.phone ? String(r.phone) : null,
+                email: r.email ? String(r.email) : null,
+              },
+            });
+            persisted++;
+          }
+          break;
+
+        case 'products':
+          for (const r of body.rows) {
+            await tx.product.upsert({
+              where: { tenantId_storeId_sourceCode: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceCode: String(r.sourceCode) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceCode: String(r.sourceCode),
+                description: String(r.description ?? ''),
+                unit: r.unit ? String(r.unit) : null,
+                stock: r.stock != null ? Number(r.stock) : null,
+                costPrice: r.costPrice != null ? Number(r.costPrice) : null,
+                salePrice: r.salePrice != null ? Number(r.salePrice) : null,
+              },
+              update: {
+                description: String(r.description ?? ''),
+                unit: r.unit ? String(r.unit) : null,
+                stock: r.stock != null ? Number(r.stock) : null,
+                costPrice: r.costPrice != null ? Number(r.costPrice) : null,
+                salePrice: r.salePrice != null ? Number(r.salePrice) : null,
+              },
+            });
+            persisted++;
+          }
+          break;
+
+        case 'cashClosings':
+          for (const r of body.rows) {
+            await tx.cashClosing.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceId: String(r.sourceId),
+                openedAt: new Date(String(r.openedAt)),
+                closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
+                operatorName: r.operatorName ? String(r.operatorName) : null,
+                totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
+                totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
+                difference: r.difference != null ? Number(r.difference) : null,
+              },
+              update: {
+                closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
+                totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
+                totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
+                difference: r.difference != null ? Number(r.difference) : null,
+              },
+            });
+            persisted++;
+          }
+          break;
+
         default:
-          throw Errors.validation(`Tabela ${body.table} ainda nao implementada`);
+          throw Errors.validation(`Tabela desconhecida`);
       }
 
       await tx.syncState.upsert({
