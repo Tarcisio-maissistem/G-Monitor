@@ -7,6 +7,25 @@ export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
 
+export interface TenantItem {
+  id: string;
+  name: string;
+  cnpj: string | null;
+  plan: string;
+  subscriptionStatus: string;
+  createdAt: string;
+  _count: { agents: number; stores: number };
+}
+
+export async function listTenants(): Promise<TenantItem[]> {
+  const res = await api<{ tenants: TenantItem[] }>('/api/admin/tenants');
+  return res.tenants;
+}
+
+export async function switchTenant(tenantId: string): Promise<{ token: string; tenant: { id: string; name: string } }> {
+  return api(`/api/admin/tenants/${tenantId}/switch`, { method: 'POST' });
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');

@@ -4,7 +4,8 @@ import { useAuthStore } from '../stores/authStore';
 
 interface LoginResponse {
   accessToken: string;
-  user: { id: string; name: string; email: string; role: string };
+  user: { id: string; name: string; email: string; role: string; isSuperAdmin?: boolean };
+  tenant: { id: string; name: string };
 }
 
 export function LoginPage(): JSX.Element {
@@ -25,7 +26,7 @@ export function LoginPage(): JSX.Element {
         method: 'POST',
         body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
       });
-      login(res.accessToken, res.user);
+      login(res.accessToken, res.user, res.tenant.id, res.tenant.name);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'erro';
       if (msg === '2fa_required') {

@@ -79,6 +79,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       tid: user.tenantId,
       rol: user.role,
       ...(user.storeId ? { sto: user.storeId } : {}),
+      ...(user.isSuperAdmin ? { sad: true } : {}),
     });
 
     const refreshRaw = generateRandomToken(48);
@@ -104,7 +105,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    return { accessToken, user: { id: user.id, name: user.name, email: user.email, role: user.role } };
+    return {
+      accessToken,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, isSuperAdmin: user.isSuperAdmin },
+      tenant: { id: user.tenantId, name: user.tenant.name },
+    };
   });
 
   app.post('/api/auth/logout', async (req, reply) => {

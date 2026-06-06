@@ -4,7 +4,7 @@ import { verifyAccess } from '../auth/jwt.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: { id: string; tenantId: string; role: Role; storeId?: string };
+    user?: { id: string; tenantId: string; role: Role; storeId?: string; isSuperAdmin?: boolean };
   }
 }
 
@@ -18,8 +18,13 @@ export async function requireAuth(req: FastifyRequest, _reply: FastifyReply): Pr
     id: payload.sub,
     tenantId: payload.tid,
     role: payload.rol as Role,
-    storeId: payload.sto,
+    ...(payload.sto !== undefined ? { storeId: payload.sto } : {}),
+    ...(payload.sad === true ? { isSuperAdmin: true } : {}),
   };
+}
+
+export async function requireSuperAdmin(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  if (!req.user?.isSuperAdmin) throw Errors.forbidden();
 }
 
 export function requireCapability(capability: string) {

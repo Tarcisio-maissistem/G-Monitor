@@ -61,6 +61,7 @@ model User {
   role              Role     @default(leitor)
   storeId           String?
   store             Store?   @relation(fields: [storeId], references: [id])
+  isSuperAdmin      Boolean  @default(false)
   twoFactorSecret   String?  // encriptado em repouso
   twoFactorEnabled  Boolean  @default(false)
   emailVerifiedAt   DateTime?

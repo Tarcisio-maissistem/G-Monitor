@@ -6,9 +6,11 @@ const refreshSecret = new TextEncoder().encode(config.JWT_REFRESH_SECRET);
 
 export interface AccessPayload {
   sub: string;       // userId
-  tid: string;       // tenantId
+  tid: string;       // tenantId (pode ser diferente do tenant original quando super-admin faz switch)
   rol: string;       // role
   sto?: string;      // storeId quando aplicavel
+  sad?: boolean;     // super-admin flag — permite switch de tenant
+  oid?: string;      // original tenantId quando super-admin esta visualizando outro tenant
 }
 
 export async function signAccess(payload: AccessPayload): Promise<string> {
