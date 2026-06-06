@@ -38,7 +38,7 @@ export function TenantSelector(): JSX.Element | null {
     (t.cnpj ?? '').includes(search),
   );
 
-  const handleSelect = async (id: string, name: string) => {
+  const handleSelect = async (id: string, _name: string) => {
     setOpen(false);
     setSearch('');
     const res = await switchTenant(id);
