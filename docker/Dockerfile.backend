@@ -1,34 +1,24 @@
-# Imagem multi-stage do backend.
-FROM node:20.19-alpine AS base
+# Build do backend. Single-stage para evitar problemas com pnpm virtual store.
+FROM node:20.19-alpine
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
 
-FROM base AS deps
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY apps/backend/package.json ./apps/backend/
-COPY packages/rpc-contracts/package.json ./packages/rpc-contracts/
-COPY packages/shared/package.json ./packages/shared/
+# Copia tudo do monorepo necessario para o build
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY apps/backend ./apps/backend
+COPY packages ./packages
+
+# Instala todas as deps (devDeps necessarios para tsc + prisma)
 RUN pnpm install --frozen-lockfile
 
-FROM base AS build
-COPY --from=deps /app /app
-COPY . .
+# Compila os pacotes em ordem de dependencia
 RUN pnpm --filter @gmonitor/rpc-contracts build \
  && pnpm --filter @gmonitor/shared build \
- && pnpm --filter @gmonitor/backend prisma generate \
+ && pnpm --filter @gmonitor/backend exec prisma generate \
  && pnpm --filter @gmonitor/backend build
 
-FROM node:20.19-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
-WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/apps/backend/dist ./apps/backend/dist
-COPY --from=build /app/apps/backend/prisma ./apps/backend/prisma
-COPY --from=build /app/apps/backend/package.json ./apps/backend/
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/pnpm-workspace.yaml /app/package.json /app/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --prod
-
+ENV PATH="/app/node_modules/.pnpm/node_modules/.bin:${PATH}"
 EXPOSE 6060
 WORKDIR /app/apps/backend
-CMD ["sh", "-c", "pnpm prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "prisma migrate deploy && node dist/index.js"]
