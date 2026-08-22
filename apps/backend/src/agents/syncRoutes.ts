@@ -15,6 +15,8 @@ const syncBatchSchema = z.object({
     'customers',
     'products',
     'cashClosings',
+    'payables',
+    'receivables',
   ]),
   rows: z.array(z.record(z.unknown())).max(1000),
   checkpoint: z.string(),
@@ -216,6 +218,62 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
                 totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
                 totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
                 difference: r.difference != null ? Number(r.difference) : null,
+              },
+            });
+            persisted++;
+          }
+          break;
+
+        case 'payables':
+          for (const r of body.rows) {
+            await tx.payable.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceId: String(r.sourceId),
+                dueDate: new Date(String(r.dueDate)),
+                value: Number(r.value ?? 0),
+                paidValue: Number(r.paidValue ?? 0),
+                paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
+                counterparty: r.counterparty ? String(r.counterparty) : null,
+                description: r.description ? String(r.description) : null,
+                cancelled: Boolean(r.cancelled),
+              },
+              update: {
+                dueDate: new Date(String(r.dueDate)),
+                value: Number(r.value ?? 0),
+                paidValue: Number(r.paidValue ?? 0),
+                paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
+                cancelled: Boolean(r.cancelled),
+              },
+            });
+            persisted++;
+          }
+          break;
+
+        case 'receivables':
+          for (const r of body.rows) {
+            await tx.receivable.upsert({
+              where: { tenantId_storeId_sourceId: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: String(r.sourceId) } },
+              create: {
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                sourceId: String(r.sourceId),
+                dueDate: new Date(String(r.dueDate)),
+                value: Number(r.value ?? 0),
+                receivedValue: Number(r.receivedValue ?? 0),
+                receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
+                counterparty: r.counterparty ? String(r.counterparty) : null,
+                description: r.description ? String(r.description) : null,
+                cancelled: Boolean(r.cancelled),
+              },
+              update: {
+                dueDate: new Date(String(r.dueDate)),
+                value: Number(r.value ?? 0),
+                receivedValue: Number(r.receivedValue ?? 0),
+                receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
+                cancelled: Boolean(r.cancelled),
               },
             });
             persisted++;

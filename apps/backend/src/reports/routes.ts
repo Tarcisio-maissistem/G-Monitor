@@ -36,6 +36,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         { id: 'inadimplencia-aging', name: 'Inadimplencia (Aging)' },
         { id: 'operator-commission', name: 'Comissao por Operador' },
         { id: 'customer-cohort', name: 'Cohort de Clientes' },
+        { id: 'payables-calendar', name: 'Calendario de Contas a Pagar' },
+        { id: 'receivables-calendar', name: 'Calendario de Contas a Receber' },
       ],
     };
   });
@@ -327,6 +329,196 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, totalCustomers: firstPurchases.length }, meta };
+  });
+
+  registerFinanceRoutes(app);
+}
+
+// ─── Contas a pagar / contas a receber ──────────────────────────────────────
+// Status (paid/pending/overdue) e sempre derivado em runtime a partir de
+// value/paidValue(ou receivedValue)/paidDate(ou receivedDate)/dueDate — nunca armazenado,
+// para nao ficar defasado quando o agente sincroniza um pagamento novo.
+
+type FinanceStatus = 'paid' | 'pending' | 'overdue';
+
+function classifyFinanceStatus(value: number, settledValue: number, settledDate: Date | null, dueDate: Date, today: Date): FinanceStatus {
+  if (settledValue >= value) return 'paid';
+  if (!settledDate && dueDate < today) return 'overdue';
+  return 'pending';
+}
+
+const monthFilter = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  storeId: z.string().optional(),
+});
+
+function monthBounds(month: string): { from: Date; to: Date } {
+  const [year, mon] = month.split('-').map(Number);
+  const from = new Date(Date.UTC(year!, mon! - 1, 1));
+  const to = new Date(Date.UTC(year!, mon!, 0, 23, 59, 59, 999));
+  return { from, to };
+}
+
+function registerFinanceRoutes(app: FastifyInstance): void {
+  app.get('/api/reports/payables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = monthFilter.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const { from, to } = monthBounds(query.month);
+
+    const rows = await prisma.payable.findMany({
+      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+      select: { dueDate: true, value: true, paidValue: true, paidDate: true },
+    });
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const days = new Map<string, { date: string; total: number; paid: number; pending: number; overdue: number }>();
+    for (const r of rows) {
+      const key = r.dueDate.toISOString().slice(0, 10);
+      if (!days.has(key)) days.set(key, { date: key, total: 0, paid: 0, pending: 0, overdue: 0 });
+      const bucket = days.get(key)!;
+      const value = Number(r.value);
+      const status = classifyFinanceStatus(value, Number(r.paidValue), r.paidDate, r.dueDate, today);
+      bucket.total += value;
+      bucket[status] += value;
+    }
+
+    const daysArr = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const monthSummary = daysArr.reduce(
+      (acc, d) => ({ total: acc.total + d.total, paid: acc.paid + d.paid, pending: acc.pending + d.pending, overdue: acc.overdue + d.overdue }),
+      { total: 0, paid: 0, pending: 0, overdue: 0 },
+    );
+
+    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
+    return { data: { days: daysArr, monthSummary }, meta };
+  });
+
+  app.get('/api/reports/receivables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = monthFilter.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const { from, to } = monthBounds(query.month);
+
+    const rows = await prisma.receivable.findMany({
+      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+      select: { dueDate: true, value: true, receivedValue: true, receivedDate: true },
+    });
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const days = new Map<string, { date: string; total: number; paid: number; pending: number; overdue: number }>();
+    for (const r of rows) {
+      const key = r.dueDate.toISOString().slice(0, 10);
+      if (!days.has(key)) days.set(key, { date: key, total: 0, paid: 0, pending: 0, overdue: 0 });
+      const bucket = days.get(key)!;
+      const value = Number(r.value);
+      const status = classifyFinanceStatus(value, Number(r.receivedValue), r.receivedDate, r.dueDate, today);
+      bucket.total += value;
+      bucket[status] += value;
+    }
+
+    const daysArr = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const monthSummary = daysArr.reduce(
+      (acc, d) => ({ total: acc.total + d.total, paid: acc.paid + d.paid, pending: acc.pending + d.pending, overdue: acc.overdue + d.overdue }),
+      { total: 0, paid: 0, pending: 0, overdue: 0 },
+    );
+
+    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
+    return { data: { days: daysArr, monthSummary }, meta };
+  });
+
+  const listFilters = z.object({
+    from: z.string().date().optional(),
+    to: z.string().date().optional(),
+    storeId: z.string().optional(),
+    status: z.enum(['paid', 'pending', 'overdue']).optional(),
+  });
+
+  app.get('/api/reports/payables', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = listFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const rows = await prisma.payable.findMany({
+      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+      orderBy: { dueDate: 'asc' },
+      take: 500,
+    });
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const data = rows
+      .map((r) => {
+        const value = Number(r.value);
+        const paidValue = Number(r.paidValue);
+        return {
+          sourceId: r.sourceId,
+          dueDate: r.dueDate,
+          value,
+          paidValue,
+          paidDate: r.paidDate,
+          counterparty: r.counterparty,
+          description: r.description,
+          balance: value - paidValue,
+          status: classifyFinanceStatus(value, paidValue, r.paidDate, r.dueDate, today),
+        };
+      })
+      .filter((r) => !query.status || r.status === query.status);
+
+    const summary = data.reduce(
+      (acc, d) => ({
+        total: acc.total + d.value,
+        pending: acc.pending + (d.status !== 'paid' ? d.balance : 0),
+        overdue: acc.overdue + (d.status === 'overdue' ? d.balance : 0),
+      }),
+      { total: 0, pending: 0, overdue: 0 },
+    );
+
+    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
+    return { data, summary, count: data.length, meta };
+  });
+
+  app.get('/api/reports/receivables', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = listFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const rows = await prisma.receivable.findMany({
+      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+      orderBy: { dueDate: 'asc' },
+      take: 500,
+    });
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const data = rows
+      .map((r) => {
+        const value = Number(r.value);
+        const receivedValue = Number(r.receivedValue);
+        return {
+          sourceId: r.sourceId,
+          dueDate: r.dueDate,
+          value,
+          receivedValue,
+          receivedDate: r.receivedDate,
+          counterparty: r.counterparty,
+          description: r.description,
+          balance: value - receivedValue,
+          status: classifyFinanceStatus(value, receivedValue, r.receivedDate, r.dueDate, today),
+        };
+      })
+      .filter((r) => !query.status || r.status === query.status);
+
+    const summary = data.reduce(
+      (acc, d) => ({
+        total: acc.total + d.value,
+        pending: acc.pending + (d.status !== 'paid' ? d.balance : 0),
+        overdue: acc.overdue + (d.status === 'overdue' ? d.balance : 0),
+      }),
+      { total: 0, pending: 0, overdue: 0 },
+    );
+
+    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
+    return { data, summary, count: data.length, meta };
   });
 }
 

@@ -88,7 +88,7 @@ O G-Monitor inverte o modelo: a inteligência fica na nuvem; na máquina do clie
 ### D4. Sync incremental por checkpoint, não CDC binário do Firebird
 
 - Firebird não tem CDC nativo simples. Agente faz `SELECT ... WHERE ID > checkpoint ORDER BY ID LIMIT 1000` em loop.
-- Tabelas sincronizadas: `VENDAS`, `ITEVENDAS`, `MOV_OPERADORES`, `PDV_ESPECIES`, `ESTOQUE`, `CLIENTE(S)`, `FECHAMENTO_CAIXA`.
+- Tabelas sincronizadas: `VENDAS`, `ITEVENDAS`, `MOV_OPERADORES`, `PDV_ESPECIES`, `ESTOQUE`, `CLIENTE(S)`, `FECHAMENTO_CAIXA`, `CONTAS_PAGAR`, `CONTAS_RECEBER` (ver D11).
 - Checkpoint local no agente (SQLite) + envio em lote.
 - Trade-off: latência de sync = intervalo do tick (ex: 30s). Suficiente para BI; queries que precisam tempo real vão direto ao agente via RPC.
 
@@ -129,6 +129,14 @@ O G-Monitor inverte o modelo: a inteligência fica na nuvem; na máquina do clie
 - Métricas: latência por endpoint, taxa de erro, conexões WS ativas, queries por agente, lag de sync.
 - Alertas: agente offline > 5min, falha Stripe webhook, taxa de erro > 1%.
 
+### D11. Contas a pagar/receber: schema financeiro do GDOOR varia por instalação
+
+- O `gdoor-relatorio` (sistema legado, mesma base de clientes) já convive com **duas variantes** de schema financeiro no Firebird, detectadas em runtime via `tableExists()`:
+  - **Variante completa** `CONTAS_PAGAR` / `CONTAS_RECEBER`: colunas `ID`, `VENCIMENTO`, `VALOR`, `VALOR_PAGO`/`VALOR_RECEBIDO`, `DT_PAGTO`/`DT_RECEBIMENTO`, `FORNECEDOR`/`CLIENTE`, `HISTORICO`, `CANCELADA`. Confirmada em produção (`BACKEND/routes/financeiro.js` do `gdoor-relatorio`).
+  - **Variante simples** `PAGAR` / `RECEBER`: colunas confirmadas apenas `VENCIMENTO`, `VALOR_DUP`, `PAGAMENTO`/`RECEBIMENTO`, `CANCELADA` (usada só para projeção de fluxo de caixa no legado, nunca para listagem com fornecedor/cliente). Não há confirmação de `ID` nem de campo de contraparte nessa variante.
+- **Decisão:** o agente detecta qual tabela existe (`RDB$RELATIONS`) no boot e reporta `financialSchema: 'contas_pagar_receber' | 'pagar_receber' | 'none'`. O catálogo/sync do MVP implementa **somente a variante completa** (`CONTAS_PAGAR`/`CONTAS_RECEBER`), por ser a única com colunas 100% confirmadas para sync incremental (precisa de `ID` estável como checkpoint). Tenant cuja instalação só tem `PAGAR`/`RECEBER` fica com o relatório marcado como indisponível (`financialSchema: 'pagar_receber'`) até validação em campo do schema real (ID, fornecedor/cliente).
+- **Trade-off:** cobre a variante mais rica primeiro; exclui do MVP contas a pagar/receber os clientes na variante simples até confirmarmos as colunas reais em uma base de produção.
+
 ## Risks / Trade-offs
 
 | Risco | Mitigação |
@@ -141,6 +149,7 @@ O G-Monitor inverte o modelo: a inteligência fica na nuvem; na máquina do clie
 | Migração de tenant existente para novo schema | Migrações Prisma com `prisma migrate deploy` versionadas + downtime planejado |
 | Stripe webhook falha = cliente paga e fica bloqueado | Job idempotente que reconcilia `subscription_status` a cada hora |
 | Custo de infra cresce mais rápido que receita | Métricas de unit economics por tenant desde o início; reajuste de plano se necessário |
+| Nome/coluna da tabela financeira (contas a pagar/receber) varia entre instalações GDOOR | Detecção de schema em runtime (D11); MVP cobre a variante `CONTAS_PAGAR`/`CONTAS_RECEBER`; variante `PAGAR`/`RECEBER` fica pendente de validação em campo |
 
 ## Migration Strategy
 

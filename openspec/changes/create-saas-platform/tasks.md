@@ -108,6 +108,13 @@
 - [x] 10.8 `GET /api/reports/customer-cohort` (skeleton)
 - [ ] 10.9 Exportação CSV/XLSX por relatório
 - [ ] 10.10 Cache Redis por (tenant, report, params) com TTL adaptativo
+- [x] 10.11 Schema Prisma `Payable`/`Receivable` (contas a pagar/receber, isolado por tenant+loja)
+- [x] 10.12 Agente: deteccao de schema financeiro (`CONTAS_PAGAR`/`CONTAS_RECEBER` x `PAGAR`/`RECEBER`) via `RDB$RELATIONS`
+- [x] 10.13 Agente: catalogo + sync incremental `CONTAS_PAGAR`/`CONTAS_RECEBER` -> Postgres
+- [x] 10.14 `GET /api/reports/payables-calendar` e `/api/reports/receivables-calendar` (totais por dia + resumo do mes)
+- [x] 10.15 `GET /api/reports/payables` e `/api/reports/receivables` (lista com filtro de status)
+- [ ] 10.16 Migration Prisma aplicada em ambiente com Postgres (`prisma migrate dev`) — pendente rodar contra banco real
+- [ ] 10.17 Validar em campo o schema `PAGAR`/`RECEBER` (variante simples) num cliente piloto para decidir se entra no catalogo
 
 ## 11. Frontend web
 
@@ -120,6 +127,7 @@
 - [ ] 11.7 i18n estruturado (atual usa pt-BR direto)
 - [x] 11.8 Code splitting (manualChunks no vite.config.ts)
 - [ ] 11.9 Build < 800 KB JS inicial
+- [x] 11.10 Calendário mensal de contas a pagar e de contas a receber (abas no Dashboard)
 
 ## 12. Observabilidade
 
