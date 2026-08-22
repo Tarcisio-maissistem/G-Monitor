@@ -59,9 +59,9 @@ export function DashboardPage(): JSX.Element {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b px-6 py-3 flex justify-between items-center shadow-sm">
+      <header className="bg-white border-b px-4 sm:px-6 py-3 flex flex-wrap gap-y-2 justify-between items-center shadow-sm">
         <h1 className="text-xl font-bold text-slate-800">G-Monitor</h1>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           {agentsOffline.length > 0 && (
             <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-medium">
               {agentsOffline.length} agente{agentsOffline.length > 1 ? 's' : ''} offline
@@ -69,21 +69,21 @@ export function DashboardPage(): JSX.Element {
           )}
           <TenantSelector />
           <span className="text-slate-600">{user?.name}</span>
-          <span className="text-xs text-slate-400 capitalize">{user?.role}</span>
+          <span className="text-xs text-slate-400 capitalize hidden sm:inline">{user?.role}</span>
           <button onClick={logout} className="text-slate-500 hover:text-slate-800 hover:underline">
             Sair
           </button>
         </div>
       </header>
 
-      <main className="p-6 space-y-6 max-w-7xl mx-auto">
+      <main className="p-3 sm:p-6 space-y-6 max-w-7xl mx-auto">
         {staleness && staleness > 300 && (
           <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg text-sm">
             ⚠ Dados sincronizados há {Math.round(staleness / 60)} min — pode haver defasagem.
           </div>
         )}
 
-        <nav className="flex gap-1 border-b">
+        <nav className="flex gap-1 border-b overflow-x-auto whitespace-nowrap">
           <TabButton label="Visão Geral" active={tab === 'overview'} onClick={() => setTab('overview')} />
           <TabButton label="Contas a Pagar" active={tab === 'payables'} onClick={() => setTab('payables')} />
           <TabButton label="Contas a Receber" active={tab === 'receivables'} onClick={() => setTab('receivables')} />

@@ -51,7 +51,7 @@ export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }):
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border p-5">
+    <div className="bg-white rounded-xl shadow-sm border p-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <button onClick={() => shiftMonth(-1)} className="px-2 py-1 text-slate-500 hover:bg-slate-100 rounded" aria-label="Mes anterior">
@@ -88,13 +88,18 @@ export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }):
             cell ? (
               <div
                 key={cell.date}
-                className={`rounded-lg border p-1.5 min-h-[64px] ${
+                title={cell.total > 0 ? formatBRL(cell.total) : undefined}
+                className={`rounded-lg border p-1 sm:p-1.5 min-h-[52px] sm:min-h-[64px] ${
                   cell.overdue > 0 ? 'border-red-200 bg-red-50' : cell.total > 0 ? 'border-slate-200 bg-slate-50' : 'border-transparent'
                 }`}
               >
-                <div className="text-slate-500">{Number(cell.date.slice(-2))}</div>
-                {cell.total > 0 && <div className="font-semibold text-slate-700 truncate">{formatBRL(cell.total)}</div>}
-                {cell.overdue > 0 && <div className="text-red-600 truncate">venc. {formatBRL(cell.overdue)}</div>}
+                <div className="text-slate-500 text-[10px] sm:text-xs">{Number(cell.date.slice(-2))}</div>
+                {cell.total > 0 && (
+                  <div className="font-semibold text-slate-700 truncate text-[10px] sm:text-xs">{formatCompactBRL(cell.total)}</div>
+                )}
+                {cell.overdue > 0 && (
+                  <div className="hidden sm:block text-red-600 truncate text-xs">venc. {formatBRL(cell.overdue)}</div>
+                )}
               </div>
             ) : (
               <div key={`empty-${i}`} />
@@ -117,4 +122,9 @@ function SummaryChip({ label, value, color }: { label: string; value: number; co
 
 function formatBRL(n: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+}
+
+// Versao curta pra caber na celula do calendario em tela de celular (ex: "R$1,2 mil").
+function formatCompactBRL(n: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 }).format(n);
 }
