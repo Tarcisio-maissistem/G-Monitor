@@ -68,6 +68,36 @@ export const CATALOG: Record<string, CatalogEntry> = {
       ORDER BY V.ID ASC
     `,
   },
+  'sync-payables-batch': {
+    id: 'sync-payables-batch',
+    description: 'Pagina de contas a pagar (CONTAS_PAGAR) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS VALUE,
+             COALESCE(C.VALOR_PAGO, 0) AS PAID_VALUE, C.DT_PAGTO AS PAID_DATE,
+             CAST(SUBSTRING(COALESCE(C.FORNECEDOR, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
+             CAST(SUBSTRING(COALESCE(C.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,
+             COALESCE(C.CANCELADA, 0) AS CANCELLED
+      FROM CONTAS_PAGAR C
+      WHERE C.ID > ?
+      ORDER BY C.ID ASC
+    `,
+  },
+  'sync-receivables-batch': {
+    id: 'sync-receivables-batch',
+    description: 'Pagina de contas a receber (CONTAS_RECEBER) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS VALUE,
+             COALESCE(C.VALOR_RECEBIDO, 0) AS RECEIVED_VALUE, C.DT_RECEBIMENTO AS RECEIVED_DATE,
+             CAST(SUBSTRING(COALESCE(C.CLIENTE, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
+             CAST(SUBSTRING(COALESCE(C.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,
+             COALESCE(C.CANCELADA, 0) AS CANCELLED
+      FROM CONTAS_RECEBER C
+      WHERE C.ID > ?
+      ORDER BY C.ID ASC
+    `,
+  },
   'ping-db': {
     id: 'ping-db',
     description: 'Health check Firebird',

@@ -5,7 +5,7 @@ O MVP inclui os seguintes relatórios pré-definidos disponíveis a todos os ten
 
 #### Scenario: Lista de relatórios disponíveis
 - **WHEN** um usuário autenticado solicita `/api/reports`
-- **THEN** retorna a lista: vendas resumo, vendas por forma de pagamento, curva ABC de produtos, DRE simplificado, ruptura de estoque, inadimplência (aging 30/60/90/90+), comissão por operador, cohort de clientes
+- **THEN** retorna a lista: vendas resumo, vendas por forma de pagamento, curva ABC de produtos, DRE simplificado, ruptura de estoque, inadimplência (aging 30/60/90/90+), comissão por operador, cohort de clientes, calendário de contas a pagar, calendário de contas a receber
 
 ### Requirement: Filtros padrão por período e loja
 Todos os relatórios aceitam parâmetros de período (`from`, `to`) e filtro por loja (`store_id` ou "todas").
@@ -63,3 +63,29 @@ A inadimplência mostra parcelas em aberto agrupadas por faixa: 0–30, 31–60,
 #### Scenario: Faixas calculadas a partir da data de vencimento
 - **WHEN** o usuário abre o relatório
 - **THEN** cada parcela aparece em apenas uma faixa com base em (hoje - data_vencimento), e totais por faixa são exibidos
+
+### Requirement: Calendário de contas a pagar
+O tenant vê, por loja ou consolidado, o calendário mensal de contas a pagar do GDOOR: um total por dia (data de vencimento) e o resumo do mês dividido em pago, a pagar e vencido. Fonte: `CONTAS_PAGAR` sincronizada do Firebird (isolada por `tenant_id`/`store_id`).
+
+#### Scenario: Totais diários do mês
+- **WHEN** o usuário solicita `/api/reports/payables-calendar?month=2026-08`
+- **THEN** o backend retorna um total por dia do mês (soma do valor das contas com aquele vencimento) e o resumo do mês com `total`, `paid`, `pending`, `overdue`
+
+#### Scenario: Classificação por status
+- **WHEN** uma conta a pagar tem `valor_pago >= valor`
+- **THEN** ela é somada em `paid`; senão, se `vencimento < hoje` e não paga, é somada em `overdue`; senão em `pending`
+
+#### Scenario: Sem dados sincronizados
+- **WHEN** o agente da loja não sincronizou `CONTAS_PAGAR` (tabela ausente no Firebird do cliente)
+- **THEN** o relatório retorna calendário vazio com `meta.financialSchema` indicando o schema detectado, sem erro 500
+
+### Requirement: Calendário de contas a receber
+Espelha o calendário de contas a pagar para as parcelas a receber (`CONTAS_RECEBER`): total por dia de vencimento e resumo do mês em recebido, a receber e vencido (inadimplente).
+
+#### Scenario: Totais diários do mês
+- **WHEN** o usuário solicita `/api/reports/receivables-calendar?month=2026-08`
+- **THEN** o backend retorna um total por dia do mês e o resumo com `total`, `paid` (recebido), `pending` (a receber), `overdue` (vencido)
+
+#### Scenario: Classificação por status
+- **WHEN** uma conta a receber tem `valor_recebido >= valor`
+- **THEN** ela é somada em `paid`; senão, se `vencimento < hoje` e não recebida, em `overdue`; senão em `pending`

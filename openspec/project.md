@@ -37,7 +37,7 @@ Plataforma SaaS multi-tenant que entrega BI gerencial em tempo real para varejis
 ## Stack confirmada
 
 - Backend: Node.js 20 + TypeScript + Fastify + Prisma
-- Banco SaaS: PostgreSQL 16 com RLS
+- Banco SaaS: Postgres gerenciado (Supabase, projeto G-Monitor, sa-east-1) com RLS — revisado 22/08, ver design.md D3/D12
 - Cache/Fila: Redis 7 + BullMQ
 - Frontend: React 18 + Vite + Tailwind + TanStack Query
 - Agente: Node.js 20 + TypeScript + `node-firebird` + `ws`, empacotado com `pkg`, serviço Windows via NSSM
@@ -45,7 +45,7 @@ Plataforma SaaS multi-tenant que entrega BI gerencial em tempo real para varejis
 - Pagamento: Stripe (assinaturas + portal de cliente)
 - Email: Resend ou Postmark
 - Observabilidade: pino + Loki + Prometheus + Grafana
-- VPS: Hostinger/Hetzner/DigitalOcean BR, Docker Compose para começar
+- VPS: Hostinger/Hetzner/DigitalOcean BR, Docker Compose para começar (backend, web, Redis, observabilidade — Postgres agora e Supabase, nao roda mais na VPS)
 
 ## Não-objetivos do MVP
 

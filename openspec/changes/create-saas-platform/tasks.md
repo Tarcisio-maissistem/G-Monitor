@@ -11,12 +11,13 @@
 
 ## 2. Infraestrutura VPS
 
-- [ ] 2.1 Provisionar VPS (Hetzner ou Hostinger BR, mínimo 4 vCPU / 8 GB / 80 GB SSD)
+- [ ] 2.1 Provisionar VPS (Hetzner ou Hostinger BR, mínimo 4 vCPU / 8 GB / 80 GB SSD) — só backend/web/Redis/observabilidade, Postgres nao entra mais (Supabase)
 - [x] 2.2 Dockerfiles backend + web + Nginx + Certbot (estrutura criada, falta executar deploy)
-- [x] 2.3 `docker-compose.prod.yml` com backend, web, postgres, redis, grafana, loki, prometheus, certbot
+- [x] 2.3 `docker-compose.prod.yml` com backend, web, postgres, redis, grafana, loki, prometheus, certbot — `postgres` do compose fica so pra teste local isolado, prod usa Supabase (D3)
 - [ ] 2.4 Domínio `app.gmonitor.com.br` + `api.gmonitor.com.br` + `ws.gmonitor.com.br`
-- [ ] 2.5 Backup automatizado do Postgres (script no SETUP.md, falta agendar)
+- [ ] 2.5 Backup do Postgres — confirmar plano do Supabase (backup diário/PITR só entra a partir do plano Pro; free tier não tem)
 - [ ] 2.6 Firewall: 22, 80, 443 abertos; resto fechado
+- [x] 2.7 Projeto Supabase criado (`G-Monitor`, sa-east-1, ref `hpxvzkzjohkrmkgvkiat`) + schema completo aplicado (4 migrations, 17 policies RLS) — 22/08
 
 ## 3. Banco multi-tenant
 
@@ -93,8 +94,10 @@
 - [x] 9.2 Loop syncTick a cada `syncIntervalMs` (default 30s)
 - [x] 9.3 Empurra deltas via POST `/api/agent/sync` (1000 linhas/lote)
 - [x] 9.4 Upsert idempotente com Prisma `upsert` por `tenantId_storeId_sourceId`
-- [ ] 9.5 Reconciliação noturna por COUNT
+- [ ] 9.5 Job de reconciliação por COUNT (worker BullMQ, cadência 1h — ver design.md D12), substitui a ideia de "noturna" original
 - [x] 9.6 Métrica `sync_lag_seconds` (gauge registrado)
+- [ ] 9.7 RPC de re-sync avulso (backend pede ao agente um range especifico quando a reconciliação acha lacuna, sem refazer a tabela inteira)
+- [ ] 9.8 Catalogo RPC `count-*` no agente (COUNT por tabela no Firebird, pro job 9.5 comparar com o Postgres)
 
 ## 10. Relatórios
 
@@ -108,6 +111,13 @@
 - [x] 10.8 `GET /api/reports/customer-cohort` (skeleton)
 - [ ] 10.9 Exportação CSV/XLSX por relatório
 - [ ] 10.10 Cache Redis por (tenant, report, params) com TTL adaptativo
+- [x] 10.11 Schema Prisma `Payable`/`Receivable` (contas a pagar/receber, isolado por tenant+loja)
+- [x] 10.12 Agente: deteccao de schema financeiro (`CONTAS_PAGAR`/`CONTAS_RECEBER` x `PAGAR`/`RECEBER`) via `RDB$RELATIONS`
+- [x] 10.13 Agente: catalogo + sync incremental `CONTAS_PAGAR`/`CONTAS_RECEBER` -> Postgres
+- [x] 10.14 `GET /api/reports/payables-calendar` e `/api/reports/receivables-calendar` (totais por dia + resumo do mes)
+- [x] 10.15 `GET /api/reports/payables` e `/api/reports/receivables` (lista com filtro de status)
+- [ ] 10.16 Migration Prisma aplicada em ambiente com Postgres (`prisma migrate dev`) — pendente rodar contra banco real
+- [ ] 10.17 Validar em campo o schema `PAGAR`/`RECEBER` (variante simples) num cliente piloto para decidir se entra no catalogo
 
 ## 11. Frontend web
 
@@ -120,6 +130,7 @@
 - [ ] 11.7 i18n estruturado (atual usa pt-BR direto)
 - [x] 11.8 Code splitting (manualChunks no vite.config.ts)
 - [ ] 11.9 Build < 800 KB JS inicial
+- [x] 11.10 Calendário mensal de contas a pagar e de contas a receber (abas no Dashboard)
 
 ## 12. Observabilidade
 

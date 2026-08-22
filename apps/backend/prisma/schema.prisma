@@ -143,6 +143,8 @@ model Store {
   products   Product[]
   cashClosings CashClosing[]
   syncState  SyncState[]
+  payables   Payable[]
+  receivables Receivable[]
 
   @@unique([tenantId, externalId])
   @@index([tenantId])
@@ -271,6 +273,52 @@ model Payment {
   @@unique([tenantId, storeId, sourceId])
   @@index([tenantId, storeId, paymentDate])
   @@map("payments")
+}
+
+// Contas a pagar sincronizadas de CONTAS_PAGAR (Firebird/GDOOR). Status (pago/pendente/vencido)
+// e derivado em runtime a partir de paidValue/paidDate/dueDate, nunca armazenado.
+model Payable {
+  id           String    @id @default(cuid())
+  tenantId     String
+  storeId      String
+  store        Store     @relation(fields: [storeId], references: [id])
+  sourceId     String    // CONTAS_PAGAR.ID no Firebird
+  dueDate      DateTime  // VENCIMENTO
+  value        Decimal   @db.Decimal(14, 2) // VALOR
+  paidValue    Decimal   @db.Decimal(14, 2) @default(0) // VALOR_PAGO
+  paidDate     DateTime? // DT_PAGTO
+  counterparty String?   // FORNECEDOR
+  description  String?   // HISTORICO
+  cancelled    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, dueDate])
+  @@map("payables")
+}
+
+// Contas a receber sincronizadas de CONTAS_RECEBER (Firebird/GDOOR). Mesma logica de status
+// do Payable, espelhada para recebimento.
+model Receivable {
+  id            String    @id @default(cuid())
+  tenantId      String
+  storeId       String
+  store         Store     @relation(fields: [storeId], references: [id])
+  sourceId      String    // CONTAS_RECEBER.ID no Firebird
+  dueDate       DateTime  // VENCIMENTO
+  value         Decimal   @db.Decimal(14, 2) // VALOR
+  receivedValue Decimal   @db.Decimal(14, 2) @default(0) // VALOR_RECEBIDO
+  receivedDate  DateTime? // DT_RECEBIMENTO
+  counterparty  String?   // CLIENTE
+  description   String?   // HISTORICO
+  cancelled     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, dueDate])
+  @@map("receivables")
 }
 
 model Customer {
