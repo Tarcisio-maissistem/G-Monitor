@@ -69,6 +69,7 @@
 - [x] 6.13 Serviço Windows via NSSM (instrução no install.ps1)
 - [ ] 6.14 Tray icon mostrando status
 - [x] 6.15 Log local com pino (`%PROGRAMDATA%\GMonitor\logs\`)
+- [ ] 6.16 `better-sqlite3` (6.8) precisa compilar nativo (node-gyp) se o Node do cliente nao tem prebuild pra versao/arch dele — trava em maquina sem Visual Studio Build Tools (achado 22/08, maquina piloto tinha Node 24). O `.exe` empacotado (6.11) resolve pra cliente final; falta confirmar que o `pkg`/`@yao-pkg/pkg` empacota o binario nativo certo, ou fixar a versao de Node do build (`.nvmrc` = 20.19+) pra ter prebuild garantido
 
 ## 7. Protocolo RPC
 
@@ -113,11 +114,12 @@
 - [ ] 10.10 Cache Redis por (tenant, report, params) com TTL adaptativo
 - [x] 10.11 Schema Prisma `Payable`/`Receivable` (contas a pagar/receber, isolado por tenant+loja)
 - [x] 10.12 Agente: deteccao de schema financeiro (`CONTAS_PAGAR`/`CONTAS_RECEBER` x `PAGAR`/`RECEBER`) via `RDB$RELATIONS`
-- [x] 10.13 Agente: catalogo + sync incremental `CONTAS_PAGAR`/`CONTAS_RECEBER` -> Postgres
+- [x] 10.13 Agente: catalogo + sync incremental — duas variantes: `PAGAR`/`RECEBER` (confirmada, primaria) e `CONTAS_PAGAR`/`CONTAS_RECEBER` (fallback nao confirmado) -> Supabase
 - [x] 10.14 `GET /api/reports/payables-calendar` e `/api/reports/receivables-calendar` (totais por dia + resumo do mes)
 - [x] 10.15 `GET /api/reports/payables` e `/api/reports/receivables` (lista com filtro de status)
-- [ ] 10.16 Migration Prisma aplicada em ambiente com Postgres (`prisma migrate dev`) — pendente rodar contra banco real
-- [ ] 10.17 Validar em campo o schema `PAGAR`/`RECEBER` (variante simples) num cliente piloto para decidir se entra no catalogo
+- [x] 10.16 Migration aplicada em banco real (Supabase, ver 2.7) — 22/08
+- [x] 10.17 Validar em campo o schema real num cliente piloto — 22/08: `PAGAR`/`RECEBER` confirmada (nao `CONTAS_PAGAR`/`CONTAS_RECEBER`), ver design.md D11
+- [ ] 10.18 Rodar o agente de verdade contra o piloto e conferir os primeiros registros de `payables`/`receivables` no Supabase (sync ainda nao executado — trava do `better-sqlite3`/Visual Studio na maquina do piloto, ver 6.16)
 
 ## 11. Frontend web
 

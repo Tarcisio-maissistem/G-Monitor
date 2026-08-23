@@ -62,11 +62,12 @@ async function syncSales(cfg: AgentConfig): Promise<number> {
 }
 
 // Sincroniza uma tabela financeira (payables/receivables) usando o mapeamento de campos passado.
-// Ambas so rodam se detectFinancialSchema() encontrar CONTAS_PAGAR/CONTAS_RECEBER (ver design.md D11) —
-// a variante PAGAR/RECEBER ainda nao entra no sync (colunas nao confirmadas).
+// Escolhe o catalogo certo pela variante de schema detectada (ver design.md D11):
+// 'pagar_receber' (PAGAR/RECEBER, CONFIRMADA em producao 22/08) ou 'contas_pagar_receber'
+// (CONTAS_PAGAR/CONTAS_RECEBER, so inferida do codigo legado — mantida como fallback).
 async function syncFinancialTable(
   cfg: AgentConfig,
-  reportId: 'sync-payables-batch' | 'sync-receivables-batch',
+  reportIdByVariant: Record<'pagar_receber' | 'contas_pagar_receber', string>,
   checkpointKey: 'payables' | 'receivables',
   syncTable: 'payables' | 'receivables',
   mapRow: (r: Record<string, unknown>) => Record<string, unknown>,
@@ -75,9 +76,9 @@ async function syncFinancialTable(
   if (!pool) return 0;
 
   const schema = await detectFinancialSchema(pool);
-  if (schema !== 'contas_pagar_receber') return 0;
+  if (schema !== 'pagar_receber' && schema !== 'contas_pagar_receber') return 0;
 
-  const entry = resolveReport(reportId)!;
+  const entry = resolveReport(reportIdByVariant[schema])!;
   const checkpoint = getCheckpoint(checkpointKey) ?? '0';
   const afterId = Number(checkpoint);
   const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, afterId]);
@@ -91,29 +92,41 @@ async function syncFinancialTable(
 }
 
 function syncPayables(cfg: AgentConfig): Promise<number> {
-  return syncFinancialTable(cfg, 'sync-payables-batch', 'payables', 'payables', (r) => ({
-    sourceId: String(r['source_id']),
-    dueDate: new Date(String(r['due_date'])).toISOString(),
-    value: Number(r['value']),
-    paidValue: Number(r['paid_value'] ?? 0),
-    paidDate: r['paid_date'] ? new Date(String(r['paid_date'])).toISOString() : null,
-    counterparty: r['counterparty'] || null,
-    description: r['description'] || null,
-    cancelled: r['cancelled'] === 1 || r['cancelled'] === '1',
-  }));
+  return syncFinancialTable(
+    cfg,
+    { pagar_receber: 'sync-payables-batch-pagar', contas_pagar_receber: 'sync-payables-batch-contas-pagar' },
+    'payables',
+    'payables',
+    (r) => ({
+      sourceId: String(r['source_id']),
+      dueDate: new Date(String(r['due_date'])).toISOString(),
+      value: Number(r['value']),
+      paidValue: Number(r['paid_value'] ?? 0),
+      paidDate: r['paid_date'] ? new Date(String(r['paid_date'])).toISOString() : null,
+      counterparty: r['counterparty'] || null,
+      description: r['description'] || null,
+      cancelled: r['cancelled'] === 1 || r['cancelled'] === '1',
+    }),
+  );
 }
 
 function syncReceivables(cfg: AgentConfig): Promise<number> {
-  return syncFinancialTable(cfg, 'sync-receivables-batch', 'receivables', 'receivables', (r) => ({
-    sourceId: String(r['source_id']),
-    dueDate: new Date(String(r['due_date'])).toISOString(),
-    value: Number(r['value']),
-    receivedValue: Number(r['received_value'] ?? 0),
-    receivedDate: r['received_date'] ? new Date(String(r['received_date'])).toISOString() : null,
-    counterparty: r['counterparty'] || null,
-    description: r['description'] || null,
-    cancelled: r['cancelled'] === 1 || r['cancelled'] === '1',
-  }));
+  return syncFinancialTable(
+    cfg,
+    { pagar_receber: 'sync-receivables-batch-receber', contas_pagar_receber: 'sync-receivables-batch-contas-receber' },
+    'receivables',
+    'receivables',
+    (r) => ({
+      sourceId: String(r['source_id']),
+      dueDate: new Date(String(r['due_date'])).toISOString(),
+      value: Number(r['value']),
+      receivedValue: Number(r['received_value'] ?? 0),
+      receivedDate: r['received_date'] ? new Date(String(r['received_date'])).toISOString() : null,
+      counterparty: r['counterparty'] || null,
+      description: r['description'] || null,
+      cancelled: r['cancelled'] === 1 || r['cancelled'] === '1',
+    }),
+  );
 }
 
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
