@@ -18,6 +18,7 @@ import { reportRoutes } from './reports/routes.js';
 import { auditRoutes } from './audit/routes.js';
 import { stripeRoutes } from './stripe/routes.js';
 import { notificationRoutes } from './notifications/routes.js';
+import { userRoutes } from './users/routes.js';
 import { adminRoutes } from './admin/routes.js';
 import { registerAgentWs } from './ws/agentServer.js';
 import { registry, httpRequestDuration } from './metrics.js';
@@ -87,6 +88,7 @@ await app.register(reportRoutes);
 await app.register(auditRoutes);
 await app.register(stripeRoutes);
 await app.register(notificationRoutes);
+await app.register(userRoutes);
 await app.register(adminRoutes);
 
 // Rotas WebSocket
