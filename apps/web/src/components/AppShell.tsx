@@ -49,25 +49,27 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      {/* Botao hamburguer — so aparece no mobile (sidebar fixa vira off-canvas abaixo de sm) */}
+      {/* Botao hamburguer — sidebar fixa vira off-canvas abaixo de lg (celular E tablet ate
+          1024px; sidebar de 224px fixa cabia mal em tablet, cortava coluna de valor nas
+          tabelas — achado com screenshot real em 768px, nao so leitura de codigo) */}
       <button
         onClick={() => setMobileOpen(true)}
-        className="sm:hidden fixed top-3 left-3 z-30 bg-slate-900 text-white rounded-lg p-2 shadow-lg"
+        className="lg:hidden fixed top-3 left-3 z-30 bg-slate-900 text-white rounded-lg p-2 shadow-lg"
         aria-label="Abrir menu"
       >
         ☰
       </button>
 
-      {mobileOpen && <div className="sm:hidden fixed inset-0 bg-black/40 z-30" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && <div className="lg:hidden fixed inset-0 bg-black/40 z-30" onClick={() => setMobileOpen(false)} />}
 
       <aside
-        className={`w-56 bg-slate-900 text-slate-100 flex flex-col fixed sm:static inset-y-0 left-0 z-40 transition-transform duration-200 ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'
+        className={`w-56 bg-slate-900 text-slate-100 flex flex-col fixed lg:static inset-y-0 left-0 z-40 transition-transform duration-200 ${
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
         <div className="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
           <h1 className="text-lg font-bold">G-Monitor</h1>
-          <button onClick={() => setMobileOpen(false)} className="sm:hidden text-slate-400 hover:text-white text-xl leading-none" aria-label="Fechar menu">
+          <button onClick={() => setMobileOpen(false)} className="lg:hidden text-slate-400 hover:text-white text-xl leading-none" aria-label="Fechar menu">
             ×
           </button>
         </div>
@@ -100,7 +102,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-x-auto pt-14 sm:pt-0">{children}</main>
+      <main className="flex-1 overflow-x-auto pt-14 lg:pt-0">{children}</main>
     </div>
   );
 }
