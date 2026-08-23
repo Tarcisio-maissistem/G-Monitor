@@ -148,6 +148,13 @@ O G-Monitor inverte o modelo: a inteligência fica na nuvem; na máquina do clie
   - **Como corrige a lacuna:** ao achar `COUNT(Firebird) > COUNT(Supabase)` numa tabela/loja, o backend derruba o checkpoint local daquele agente pra forçar reprocessar a partir de um ID anterior (ou pede um RPC `syncBatch` avulso com range específico) — não um full re-sync da tabela inteira.
 - **Ainda não implementado**: este job (worker + endpoint de status + RPC de reconciliação). Ver tasks.md 9.5/9.7.
 
+### D13. Backend piloto saiu da VPS do Ana Food, roda no servidor local do Tarcísio (ms-gestor)
+
+- **Por quê:** a VPS do Ana Food é compartilhada (13+ processos de outro produto) e é uma VM com CPU **steal time de ~40%** (host físico sobrecarregado, fora do controle do Tarcísio) — achado 22/08 ao investigar login/dashboard lentos (>1min). O servidor local (`10.8.0.2`, hostname `servidor`, hardware físico IBM x3100 M4, 4 vCPU dedicados, 0% steal, já usado pra rodar o `ms-gestor`) não tem essa disputa. Login que levava ~5-20s na VPS caiu pra ~1-1.5s no servidor local (mesmo Supabase, mesma rede até ele).
+- **Como conecta ao público:** o servidor local não tem IP público (fica atrás de NAT, só alcançável hoje via WireGuard). Em vez de criar um Cloudflare Tunnel novo (o token de API disponível não tinha permissão de conta pra isso), reaproveitou-se a ponte que já existe: o nginx da VPS do Ana Food continua sendo o ponto público (`gmonitor-pilot.anafood.vip`, TLS, DNS — tudo igual), mas o `proxy_pass` de `/api/` e `/ws/agent` aponta pra `http://10.8.0.2:6070` (IP privado do WireGuard) em vez de `127.0.0.1:6070`. O build estático do frontend (`apps/web/dist`) continua servido localmente pela VPS — só a parte pesada (banco, sync) saiu de lá. Hostname do agente **não mudou** — ele reconectou sozinho sem precisar trocar `agent.json`.
+- **Achado de infra**: nesse servidor, `pnpm exec <bin>` (prisma, tsc, vite) trava/retorna vazio silenciosamente — build precisa invocar o `.js` do pacote direto via `node .../node_modules/<pkg>/bin-ou-build/index.js` (mesmo padrão já documentado nas memórias do ms-gestor pra `npx tsc`). E `pnpm` sozinho trava esperando um prompt de telemetria em sessão não-interativa — precisa `CI=true` no ambiente.
+- **O que ficou na VPS do Ana Food**: só o nginx (proxy fino) + o build estático do web. Removido: processo PM2 do backend, container Redis dedicado, containers/volumes docker órfãos de tentativas anteriores (postgres local descartado quando a decisão virou Supabase, ver D3/D12), `.env` com segredos (não é mais usado lá).
+
 ## Risks / Trade-offs
 
 | Risco | Mitigação |
