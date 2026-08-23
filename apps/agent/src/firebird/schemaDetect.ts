@@ -1,9 +1,10 @@
 import type { FirebirdPool } from './client.js';
 import { logger } from '../logger.js';
 
-// Deteccao de schema financeiro do GDOOR. Instalacoes variam entre a variante
-// completa (CONTAS_PAGAR/CONTAS_RECEBER) e uma variante simples (PAGAR/RECEBER)
-// sem colunas confirmadas de ID/fornecedor/cliente — ver design.md D11.
+// Deteccao de schema financeiro do GDOOR. Instalacoes variam entre PAGAR/RECEBER
+// (CONFIRMADA em producao, cliente piloto 22/08 — colunas reais via RDB$RELATION_FIELDS)
+// e CONTAS_PAGAR/CONTAS_RECEBER (so inferida do codigo legado gdoor-relatorio, mantida
+// como fallback pra outra instalacao GDOOR que a tenha). Ver design.md D11.
 // Mesmo padrao defensivo do gdoor-relatorio (tableExists via RDB$RELATIONS).
 
 export type FinancialSchema = 'contas_pagar_receber' | 'pagar_receber' | 'none';
@@ -34,7 +35,7 @@ export async function detectFinancialSchema(pool: FirebirdPool): Promise<Financi
   const [hasPagar, hasReceber] = await Promise.all([tableExists(pool, 'PAGAR'), tableExists(pool, 'RECEBER')]);
   if (hasPagar && hasReceber) {
     cached = 'pagar_receber';
-    logger.warn({ schema: cached }, 'financial schema is the simple variant (PAGAR/RECEBER) — sync nao suportado ainda, ver design.md D11');
+    logger.info({ schema: cached }, 'financial schema detected');
     return cached;
   }
 
