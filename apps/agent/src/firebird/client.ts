@@ -1,6 +1,7 @@
 import Firebird from 'node-firebird';
 import { logger } from '../logger.js';
 import type { AgentConfig } from '../config.js';
+import { patchFirebirdStringDecoding } from './charsetPatch.js';
 
 // Wrapper Promise sobre node-firebird com pool de conexoes.
 // Prepared statements: o driver suporta parametros via array no segundo arg de query().
@@ -11,6 +12,8 @@ export interface FirebirdPool {
 }
 
 export function createFirebirdPool(cfg: AgentConfig): FirebirdPool {
+  patchFirebirdStringDecoding();
+
   const options: Firebird.Options = {
     host: cfg.firebird.host,
     port: cfg.firebird.port,
