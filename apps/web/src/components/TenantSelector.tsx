@@ -1,8 +1,18 @@
-// Seletor de tenant para super-admin — visivel apenas quando isSuperAdmin=true.
+// Seletor de empresa (tenant). Dois modos:
+// - super-admin: ve TODAS as empresas (GET /api/admin/tenants), sem limite.
+// - usuario comum: so aparece se tiver ao menos 1 concessao de TenantAccess (matriz que
+//   precisa ver filiais) — GET /api/users/me/tenant-access. Decisao do dono 23/08: por
+//   padrao ninguem alem do super-admin acessa outra empresa; e concessao explicita.
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { listTenants, switchTenant } from '../lib/api';
+import { listTenants, switchTenant, listMyTenantAccess, switchMyTenant, type TenantItem, type TenantAccessItem } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+
+interface Option {
+  id: string;
+  name: string;
+  subtitle?: string;
+}
 
 export function TenantSelector(): JSX.Element | null {
   const user = useAuthStore((s) => s.user);
@@ -10,6 +20,7 @@ export function TenantSelector(): JSX.Element | null {
   const activeTenantName = useAuthStore((s) => s.activeTenantName);
   const doSwitch = useAuthStore((s) => s.switchTenant);
   const queryClient = useQueryClient();
+  const isSuperAdmin = user?.isSuperAdmin === true;
 
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -24,24 +35,34 @@ export function TenantSelector(): JSX.Element | null {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const { data, isLoading } = useQuery({
+  const adminQuery = useQuery({
     queryKey: ['admin-tenants'],
     queryFn: listTenants,
-    enabled: user?.isSuperAdmin === true,
+    enabled: isSuperAdmin,
+    staleTime: 30_000,
+  });
+  const accessQuery = useQuery({
+    queryKey: ['my-tenant-access'],
+    queryFn: listMyTenantAccess,
+    enabled: !isSuperAdmin && !!user,
     staleTime: 30_000,
   });
 
-  if (!user?.isSuperAdmin) return null;
+  const isLoading = isSuperAdmin ? adminQuery.isLoading : accessQuery.isLoading;
+  const options: Option[] = isSuperAdmin
+    ? (adminQuery.data ?? []).map((t: TenantItem) => ({ id: t.id, name: t.name, subtitle: t.cnpj ?? undefined }))
+    : (accessQuery.data ?? []).map((a: TenantAccessItem) => ({ id: a.tenantId, name: a.tenantName }));
 
-  const filtered = (data ?? []).filter((t) =>
-    t.name.toLowerCase().includes(search.toLowerCase()) ||
-    (t.cnpj ?? '').includes(search),
-  );
+  // Usuario comum sem nenhuma concessao: nao mostra seletor (so tem a propria empresa mesmo).
+  if (!user) return null;
+  if (!isSuperAdmin && options.length === 0) return null;
 
-  const handleSelect = async (id: string, _name: string) => {
+  const filtered = options.filter((o) => o.name.toLowerCase().includes(search.toLowerCase()) || (o.subtitle ?? '').includes(search));
+
+  const handleSelect = async (id: string) => {
     setOpen(false);
     setSearch('');
-    const res = await switchTenant(id);
+    const res = isSuperAdmin ? await switchTenant(id) : await switchMyTenant(id);
     doSwitch(res.token, res.tenant.id, res.tenant.name);
     // Invalida todos os reports — recarregam com novo token/tenant
     await queryClient.invalidateQueries();
@@ -76,28 +97,14 @@ export function TenantSelector(): JSX.Element | null {
             {!isLoading && filtered.length === 0 && (
               <li className="px-4 py-2 text-sm text-slate-400">Nenhum cliente encontrado</li>
             )}
-            {filtered.map((t) => (
-              <li key={t.id}>
+            {filtered.map((o) => (
+              <li key={o.id}>
                 <button
-                  onClick={() => void handleSelect(t.id, t.name)}
-                  className={`w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center justify-between ${
-                    t.id === activeTenantId ? 'bg-blue-50' : ''
-                  }`}
+                  onClick={() => void handleSelect(o.id)}
+                  className={`w-full text-left px-4 py-2 hover:bg-slate-50 ${o.id === activeTenantId ? 'bg-blue-50' : ''}`}
                 >
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">{t.name}</div>
-                    {t.cnpj && <div className="text-xs text-slate-400">{t.cnpj}</div>}
-                  </div>
-                  <div className="flex flex-col items-end gap-0.5">
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                      t.subscriptionStatus === 'active' || t.subscriptionStatus === 'trialing'
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-red-50 text-red-700'
-                    }`}>
-                      {t.subscriptionStatus}
-                    </span>
-                    <span className="text-xs text-slate-400">{t._count.agents} ag.</span>
-                  </div>
+                  <div className="text-sm font-medium text-slate-800">{o.name}</div>
+                  {o.subtitle && <div className="text-xs text-slate-400">{o.subtitle}</div>}
                 </button>
               </li>
             ))}
