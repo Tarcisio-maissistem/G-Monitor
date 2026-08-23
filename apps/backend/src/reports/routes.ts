@@ -1,8 +1,39 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
+import { redis } from '../db/redis.js';
+import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+
+// Cache curto (cache-aside) pros relatorios: cada request bate no Supabase (~180ms de RTT
+// so na ida-e-volta, sa-east-1) e a maioria dos handlers faz 2-4 chamadas Prisma sequenciais
+// — por isso ~1.3s por relatorio mesmo sem query pesada nem indice faltando (medido 23/08).
+// TTL curto (45s) porque o agente sincroniza a cada 30s; nao precisa de precisao ao segundo.
+const REPORT_CACHE_TTL_SECONDS = 45;
+
+function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req) => Promise<unknown>) {
+  return async (req: Req): Promise<unknown> => {
+    const tenantId = (req as unknown as { user?: { tenantId?: string } }).user?.tenantId ?? 'anon';
+    const key = `report:${tenantId}:${reportId}:${JSON.stringify(req.query)}`;
+    try {
+      const hit = await redis.get(key);
+      if (hit) return JSON.parse(hit);
+    } catch (err) {
+      logger.error({ err }, 'redis cache read failed, seguindo sem cache');
+    }
+
+    const result = await handler(req);
+
+    try {
+      await redis.setex(key, REPORT_CACHE_TTL_SECONDS, JSON.stringify(result));
+    } catch (err) {
+      logger.error({ err }, 'redis cache write failed, seguindo sem cache');
+    }
+
+    return result;
+  };
+}
 
 // Filtros padrao reutilizados em todos os relatorios.
 const baseFilters = z.object({
@@ -48,7 +79,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.get('/api/reports/sales-summary', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/sales-summary', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales-summary', async (req) => {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
@@ -83,9 +114,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       },
       meta,
     };
-  });
+  }));
 
-  app.get('/api/reports/abc-products', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/abc-products', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('abc-products', async (req) => {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
@@ -123,9 +154,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal: grand }, meta };
-  });
+  }));
 
-  app.get('/api/reports/sales-by-payment', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/sales-by-payment', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales-by-payment', async (req) => {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
@@ -152,7 +183,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal }, meta };
-  });
+  }));
 
   app.get('/api/reports/dre-simplified', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
     const query = baseFilters.parse(req.query);
@@ -274,7 +305,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.get('/api/reports/operator-commission', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/operator-commission', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('operator-commission', async (req) => {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
@@ -303,7 +334,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal }, meta };
-  });
+  }));
 
   app.get('/api/reports/customer-cohort', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
     const query = baseFilters.parse(req.query);
@@ -366,7 +397,7 @@ function monthBounds(month: string): { from: Date; to: Date } {
 }
 
 function registerFinanceRoutes(app: FastifyInstance): void {
-  app.get('/api/reports/payables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/payables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('payables-calendar', async (req) => {
     const query = monthFilter.parse(req.query);
     const storeId = resolveStoreScope(req, query.storeId);
     const { from, to } = monthBounds(query.month);
@@ -397,9 +428,9 @@ function registerFinanceRoutes(app: FastifyInstance): void {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { days: daysArr, monthSummary }, meta };
-  });
+  }));
 
-  app.get('/api/reports/receivables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/receivables-calendar', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('receivables-calendar', async (req) => {
     const query = monthFilter.parse(req.query);
     const storeId = resolveStoreScope(req, query.storeId);
     const { from, to } = monthBounds(query.month);
@@ -430,7 +461,7 @@ function registerFinanceRoutes(app: FastifyInstance): void {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { days: daysArr, monthSummary }, meta };
-  });
+  }));
 
   const listFilters = z.object({
     from: z.string().date().optional(),
@@ -439,16 +470,19 @@ function registerFinanceRoutes(app: FastifyInstance): void {
     status: z.enum(['paid', 'pending', 'overdue']).optional(),
   });
 
-  app.get('/api/reports/payables', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/payables', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('payables', async (req) => {
     const query = listFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
+    const where = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } };
 
-    const rows = await prisma.payable.findMany({
-      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
-      orderBy: { dueDate: 'asc' },
-      take: 500,
-    });
+    // Resumo (summary) sempre sobre o total real (nao so as 500 exibidas), senao pending/
+    // overdue somam errado quando a janela de datas tem mais de 500 lancamentos.
+    const [rows, allForSummary, totalCount] = await Promise.all([
+      prisma.payable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
+      prisma.payable.findMany({ where, select: { value: true, paidValue: true, paidDate: true, dueDate: true } }),
+      prisma.payable.count({ where }),
+    ]);
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
@@ -470,29 +504,37 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       })
       .filter((r) => !query.status || r.status === query.status);
 
-    const summary = data.reduce(
-      (acc, d) => ({
-        total: acc.total + d.value,
-        pending: acc.pending + (d.status !== 'paid' ? d.balance : 0),
-        overdue: acc.overdue + (d.status === 'overdue' ? d.balance : 0),
-      }),
+    const summary = allForSummary.reduce(
+      (acc, r) => {
+        const value = Number(r.value);
+        const paidValue = Number(r.paidValue);
+        const balance = value - paidValue;
+        const status = classifyFinanceStatus(value, paidValue, r.paidDate, r.dueDate, today);
+        return {
+          total: acc.total + value,
+          pending: acc.pending + (status !== 'paid' ? balance : 0),
+          overdue: acc.overdue + (status === 'overdue' ? balance : 0),
+        };
+      },
       { total: 0, pending: 0, overdue: 0 },
     );
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
-    return { data, summary, count: data.length, meta };
-  });
+    return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
+  }));
 
-  app.get('/api/reports/receivables', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/receivables', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('receivables', async (req) => {
     const query = listFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
+    const where = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } };
 
-    const rows = await prisma.receivable.findMany({
-      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
-      orderBy: { dueDate: 'asc' },
-      take: 500,
-    });
+    // Mesma logica do payables: summary sobre o total real, nao so as 500 exibidas.
+    const [rows, allForSummary, totalCount] = await Promise.all([
+      prisma.receivable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
+      prisma.receivable.findMany({ where, select: { value: true, receivedValue: true, receivedDate: true, dueDate: true } }),
+      prisma.receivable.count({ where }),
+    ]);
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
@@ -514,18 +556,24 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       })
       .filter((r) => !query.status || r.status === query.status);
 
-    const summary = data.reduce(
-      (acc, d) => ({
-        total: acc.total + d.value,
-        pending: acc.pending + (d.status !== 'paid' ? d.balance : 0),
-        overdue: acc.overdue + (d.status === 'overdue' ? d.balance : 0),
-      }),
+    const summary = allForSummary.reduce(
+      (acc, r) => {
+        const value = Number(r.value);
+        const receivedValue = Number(r.receivedValue);
+        const balance = value - receivedValue;
+        const status = classifyFinanceStatus(value, receivedValue, r.receivedDate, r.dueDate, today);
+        return {
+          total: acc.total + value,
+          pending: acc.pending + (status !== 'paid' ? balance : 0),
+          overdue: acc.overdue + (status === 'overdue' ? balance : 0),
+        };
+      },
       { total: 0, pending: 0, overdue: 0 },
     );
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
-    return { data, summary, count: data.length, meta };
-  });
+    return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
+  }));
 }
 
 async function getFreshnessMeta(tenantId: string, storeId: string | null): Promise<{

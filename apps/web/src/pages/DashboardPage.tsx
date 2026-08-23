@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
@@ -47,6 +48,8 @@ export function DashboardPage(): JSX.Element {
   const to = today.toISOString().slice(0, 10);
   const qs = `from=${from}&to=${to}`;
   const mesAtualLabel = today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+  const [showAllOperators, setShowAllOperators] = useState(false);
 
   const summary = useQuery({ queryKey: ['sales-summary', from, to], queryFn: () => api<SalesSummary>(`/api/reports/sales-summary?${qs}`) });
   const abc = useQuery({ queryKey: ['abc-products', from, to], queryFn: () => api<AbcProducts>(`/api/reports/abc-products?${qs}`) });
@@ -111,14 +114,14 @@ export function DashboardPage(): JSX.Element {
           )}
         </section>
 
-        {/* Operadores */}
+        {/* Ranking de vendedores */}
         <section className="bg-white rounded-xl shadow-sm border p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">Ranking de Operadores</h3>
+          <h3 className="font-semibold text-slate-700 mb-4">Ranking de Vendedores</h3>
           {operators.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
           {operators.error && <ErrorBox msg={(operators.error as Error).message} />}
           {operators.data && (
             <div className="space-y-2">
-              {operators.data.data.rows.slice(0, 6).map((r, i) => (
+              {operators.data.data.rows.slice(0, showAllOperators ? 100 : 10).map((r, i) => (
                 <div key={r.operator} className="flex items-center gap-2">
                   <span className="text-xs text-slate-400 w-4">{i + 1}</span>
                   <span className="text-sm text-slate-600 flex-1 truncate">{r.operator}</span>
@@ -126,6 +129,14 @@ export function DashboardPage(): JSX.Element {
                   <span className="text-sm font-medium text-slate-700 w-28 text-right">{formatBRL(r.total)}</span>
                 </div>
               ))}
+              {operators.data.data.rows.length > 10 && (
+                <button
+                  onClick={() => setShowAllOperators((v) => !v)}
+                  className="w-full text-center text-xs text-blue-600 hover:text-blue-800 pt-2 border-t"
+                >
+                  {showAllOperators ? 'ver menos' : `ver mais (${operators.data.data.rows.length - 10})`}
+                </button>
+              )}
             </div>
           )}
         </section>

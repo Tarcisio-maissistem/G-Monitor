@@ -15,12 +15,28 @@ interface FinanceCalendarResponse {
   meta: { lastSyncedAt: string | null; stalenessSeconds: number | null; agentsOffline: string[] };
 }
 
+interface FinanceEntry {
+  sourceId: string;
+  dueDate: string;
+  value: number;
+  paidValue?: number;
+  receivedValue?: number;
+  counterparty: string | null;
+  description: string | null;
+  status: 'paid' | 'pending' | 'overdue';
+}
+
+interface FinanceListResponse {
+  data: FinanceEntry[];
+}
+
 const WEEKDAYS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 // Calendario mensal de contas a pagar/receber. Cada dia mostra o total com vencimento
 // naquele dia; o cabecalho mostra o resumo do mes (pago/a pagar/vencido).
 export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }): JSX.Element {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [year, mon] = month.split('-').map(Number) as [number, number];
 
   const endpoint = kind === 'payables' ? '/api/reports/payables-calendar' : '/api/reports/receivables-calendar';
@@ -89,7 +105,8 @@ export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }):
               <div
                 key={cell.date}
                 title={cell.total > 0 ? formatBRL(cell.total) : undefined}
-                className={`rounded-lg border p-1 sm:p-1.5 min-h-[52px] sm:min-h-[64px] ${
+                onClick={() => cell.total > 0 && setSelectedDay(cell.date)}
+                className={`rounded-lg border p-1 sm:p-1.5 min-h-[52px] sm:min-h-[64px] ${cell.total > 0 ? 'cursor-pointer hover:ring-2 hover:ring-blue-300' : ''} ${
                   cell.overdue > 0 ? 'border-red-200 bg-red-50' : cell.total > 0 ? 'border-slate-200 bg-slate-50' : 'border-transparent'
                 }`}
               >
@@ -107,6 +124,73 @@ export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }):
           )}
         </div>
       )}
+
+      {selectedDay && <DayDrilldown kind={kind} date={selectedDay} onClose={() => setSelectedDay(null)} />}
+    </div>
+  );
+}
+
+const STATUS_LABEL: Record<FinanceEntry['status'], string> = { pending: 'a pagar', paid: 'pago', overdue: 'vencido' };
+
+// Modal simples com a lista de lancamentos de um dia especifico (pagaveis ou recebiveis),
+// reusando os mesmos endpoints /api/reports/{payables|receivables} com from=to=dia clicado.
+function DayDrilldown({ kind, date, onClose }: { kind: 'payables' | 'receivables'; date: string; onClose: () => void }): JSX.Element {
+  const endpoint = kind === 'payables' ? '/api/reports/payables' : '/api/reports/receivables';
+  const label = kind === 'payables' ? 'Fornecedor' : 'Cliente';
+  const settledLabel = kind === 'payables' ? 'Pago' : 'Recebido';
+  const query = useQuery({
+    queryKey: [endpoint, 'dia', date],
+    queryFn: () => api<FinanceListResponse>(`${endpoint}?from=${date}&to=${date}`),
+  });
+  const rows = query.data?.data ?? [];
+  const dateLabel = new Date(`${date}T12:00:00Z`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="font-semibold text-slate-700 capitalize">{dateLabel}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none" aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4">
+          {query.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+          {!query.isLoading && rows.length === 0 && <div className="text-slate-400 text-sm">Nada nesse dia.</div>}
+          {rows.length > 0 && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 border-b">
+                  <th className="text-left pb-2 font-medium">{label}</th>
+                  <th className="text-left pb-2 font-medium">Histórico</th>
+                  <th className="text-right pb-2 font-medium">Valor</th>
+                  <th className="text-right pb-2 font-medium">{settledLabel}</th>
+                  <th className="text-center pb-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.sourceId} className="border-b border-slate-50">
+                    <td className="py-2 pr-2 text-slate-700">{r.counterparty ?? '-'}</td>
+                    <td className="py-2 pr-2 text-slate-500">{r.description ?? '-'}</td>
+                    <td className="py-2 text-right font-medium">{formatBRL(r.value)}</td>
+                    <td className="py-2 text-right text-slate-600">{formatBRL(r.paidValue ?? r.receivedValue ?? 0)}</td>
+                    <td className="py-2 text-center">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs ${
+                          r.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : r.status === 'overdue' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
+                        }`}
+                      >
+                        {STATUS_LABEL[r.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useRoute } from '../lib/router';
 import { TenantSelector } from './TenantSelector';
@@ -34,24 +34,48 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const { path, navigate } = useRoute();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const isActive = (item: NavItem): boolean => {
     if (item.path === '/') return path === '/' || path === '';
     return path.startsWith(item.path);
   };
 
+  function go(itemPath: string): void {
+    navigate(itemPath);
+    setMobileOpen(false);
+  }
+
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <aside className="w-56 bg-slate-900 text-slate-100 flex flex-col">
-        <div className="px-5 py-4 border-b border-slate-700">
+      {/* Botao hamburguer — so aparece no mobile (sidebar fixa vira off-canvas abaixo de sm) */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="sm:hidden fixed top-3 left-3 z-30 bg-slate-900 text-white rounded-lg p-2 shadow-lg"
+        aria-label="Abrir menu"
+      >
+        ☰
+      </button>
+
+      {mobileOpen && <div className="sm:hidden fixed inset-0 bg-black/40 z-30" onClick={() => setMobileOpen(false)} />}
+
+      <aside
+        className={`w-56 bg-slate-900 text-slate-100 flex flex-col fixed sm:static inset-y-0 left-0 z-40 transition-transform duration-200 ${
+          mobileOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'
+        }`}
+      >
+        <div className="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
           <h1 className="text-lg font-bold">G-Monitor</h1>
+          <button onClick={() => setMobileOpen(false)} className="sm:hidden text-slate-400 hover:text-white text-xl leading-none" aria-label="Fechar menu">
+            ×
+          </button>
         </div>
         <TenantSelector />
-        <nav className="flex-1 py-3 space-y-1">
+        <nav className="flex-1 py-3 space-y-1 overflow-y-auto">
           {NAV.map((item) => (
             <button
               key={item.path}
-              onClick={() => navigate(item.path)}
+              onClick={() => go(item.path)}
               className={`w-full text-left px-5 py-2 text-sm transition-colors ${
                 isActive(item)
                   ? 'bg-slate-800 text-white border-l-4 border-blue-500'
@@ -75,7 +99,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-x-auto">{children}</main>
+      <main className="flex-1 overflow-x-auto pt-14 sm:pt-0">{children}</main>
     </div>
   );
 }
