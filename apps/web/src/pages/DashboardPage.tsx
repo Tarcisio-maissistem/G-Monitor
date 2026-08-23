@@ -41,10 +41,17 @@ const KLASS_COLOR: Record<string, string> = { A: 'text-green-700 bg-green-50', B
 // Header/logout/seletor de empresa agora ficam no AppShell (sidebar). Esta pagina e so
 // o conteudo da rota "/" — resumo geral de vendas.
 export function DashboardPage(): JSX.Element {
-  const summary = useQuery({ queryKey: ['sales-summary'], queryFn: () => api<SalesSummary>('/api/reports/sales-summary') });
-  const abc = useQuery({ queryKey: ['abc-products'], queryFn: () => api<AbcProducts>('/api/reports/abc-products') });
-  const payments = useQuery({ queryKey: ['sales-by-payment'], queryFn: () => api<SalesByPayment>('/api/reports/sales-by-payment') });
-  const operators = useQuery({ queryKey: ['operator-commission'], queryFn: () => api<OperatorCommission>('/api/reports/operator-commission') });
+  // Padrao: mes atual, do dia 1 ate hoje (nao "ultimos 30 dias" — pedido do dono 23/08).
+  const today = new Date();
+  const from = new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)).toISOString().slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+  const qs = `from=${from}&to=${to}`;
+  const mesAtualLabel = today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+  const summary = useQuery({ queryKey: ['sales-summary', from, to], queryFn: () => api<SalesSummary>(`/api/reports/sales-summary?${qs}`) });
+  const abc = useQuery({ queryKey: ['abc-products', from, to], queryFn: () => api<AbcProducts>(`/api/reports/abc-products?${qs}`) });
+  const payments = useQuery({ queryKey: ['sales-by-payment', from, to], queryFn: () => api<SalesByPayment>(`/api/reports/sales-by-payment?${qs}`) });
+  const operators = useQuery({ queryKey: ['operator-commission', from, to], queryFn: () => api<OperatorCommission>(`/api/reports/operator-commission?${qs}`) });
 
   const staleness = summary.data?.meta.stalenessSeconds;
   const agentsOffline = summary.data?.meta.agentsOffline ?? [];
@@ -64,7 +71,7 @@ export function DashboardPage(): JSX.Element {
 
       {/* KPIs */}
       <section>
-        <h2 className="text-lg font-semibold text-slate-700 mb-3">Resumo dos últimos 30 dias</h2>
+        <h2 className="text-lg font-semibold text-slate-700 mb-3">Resumo de {mesAtualLabel}</h2>
         {summary.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
         {summary.error && <ErrorBox msg={(summary.error as Error).message} />}
         {summary.data && (

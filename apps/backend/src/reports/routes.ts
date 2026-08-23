@@ -18,9 +18,15 @@ function resolveStoreScope(req: { user?: { storeId?: string; role: string } }, r
   return requestedStoreId;
 }
 
+// Sem from/to explicitos, o padrao e o mes atual (dia 1 ate hoje) — nao "ultimos 30 dias".
+function startOfCurrentMonth(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
 function defaultPeriod(from?: string, to?: string): { from: Date; to: Date } {
   const toDate = to ? new Date(to + 'T23:59:59Z') : new Date();
-  const fromDate = from ? new Date(from + 'T00:00:00Z') : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const fromDate = from ? new Date(from + 'T00:00:00Z') : startOfCurrentMonth();
   return { from: fromDate, to: toDate };
 }
 
