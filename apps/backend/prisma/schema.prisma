@@ -33,6 +33,7 @@ model Tenant {
   auditLogs          AuditLog[]
   notifications      Notification[]
   notificationRules  NotificationRule[]
+  tenantAccess       TenantAccess[]
 
   @@map("tenants")
 }
@@ -74,10 +75,29 @@ model User {
   auditLogs         AuditLog[]
   notifications     Notification[]
   notificationPreferences NotificationPreference[]
+  tenantAccess      TenantAccess[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
   @@map("users")
+}
+
+// Acesso adicional a OUTRAS empresas alem da tenantId primaria do usuario (matriz que
+// precisa ver filiais). Nao se aplica a isSuperAdmin=true — esse ja acessa tudo (ver
+// admin/routes.ts). Decisao do dono (23/08): so ele tem acesso automatico a todas as
+// empresas; qualquer outro usuario precisa de concessao explicita aqui.
+model TenantAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role      Role     @default(leitor)
+  grantedAt DateTime @default(now())
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@map("tenant_access")
 }
 
 enum Role {

@@ -6,6 +6,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
 import { generateRandomToken, hashToken } from '../auth/tokens.js';
+import { signAccess } from '../auth/jwt.js';
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -185,6 +186,42 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     },
   );
+
+  // Empresas adicionais que o usuario logado tem acesso (alem da propria tenantId).
+  // Super-admin nao usa isso — ja acessa tudo via /api/admin/tenants + switch.
+  app.get('/api/users/me/tenant-access', { preHandler: [requireAuth] }, async (req) => {
+    const accesses = await prisma.tenantAccess.findMany({
+      where: { userId: req.user!.id },
+      include: { tenant: { select: { id: true, name: true } } },
+      orderBy: { grantedAt: 'desc' },
+    });
+    return {
+      accesses: accesses.map((a) => ({ tenantId: a.tenant.id, tenantName: a.tenant.name, role: a.role })),
+    };
+  });
+
+  // Troca de contexto pra uma empresa concedida via TenantAccess (ou a propria, trivial).
+  // Mesmo padrao do /api/admin/tenants/:id/switch, mas sem exigir isSuperAdmin — checa a
+  // concessao explicita em vez disso.
+  app.post<{ Params: { tenantId: string } }>('/api/users/me/tenant-access/:tenantId/switch', { preHandler: [requireAuth] }, async (req) => {
+    const { tenantId } = req.params;
+    const isOwnTenant = tenantId === req.user!.tenantId;
+
+    let grantRole = req.user!.role;
+    if (!isOwnTenant) {
+      const grant = await prisma.tenantAccess.findUnique({
+        where: { userId_tenantId: { userId: req.user!.id, tenantId } },
+      });
+      if (!grant) throw Errors.forbidden('Sem acesso concedido a esta empresa');
+      grantRole = grant.role;
+    }
+
+    const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, deletedAt: null } });
+    if (!tenant) throw Errors.notFound('Empresa nao encontrada');
+
+    const token = await signAccess({ sub: req.user!.id, tid: tenant.id, rol: grantRole });
+    return { token, tenant: { id: tenant.id, name: tenant.name } };
+  });
 
   // Troca de senha do proprio usuario
   app.patch('/api/users/me/password', { preHandler: [requireAuth] }, async (req) => {

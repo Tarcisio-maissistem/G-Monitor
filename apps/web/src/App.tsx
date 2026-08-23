@@ -1,9 +1,11 @@
 import { useAuthStore } from './stores/authStore';
-import { useRoute } from './lib/router';
+import { useRoute, matchRoute } from './lib/router';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContasPagarPage } from './pages/ContasPagarPage';
 import { ContasReceberPage } from './pages/ContasReceberPage';
+import { EmpresasPage } from './pages/EmpresasPage';
+import { UsuariosPage } from './pages/UsuariosPage';
 import { AppShell } from './components/AppShell';
 
 // Paginas trazidas do trabalho local do Tarcisio (servidor ms-gestor, nunca commitado —
@@ -24,7 +26,6 @@ const COMING_SOON: Record<string, string> = {
   '/relatorios': 'Relatórios',
   '/produtos': 'Produtos',
   '/clientes': 'Clientes',
-  '/empresas': 'Empresas',
 };
 
 export function App(): JSX.Element {
@@ -33,13 +34,18 @@ export function App(): JSX.Element {
 
   if (!user) return <LoginPage />;
 
-  return <AppShell>{renderPage(path)}</AppShell>;
+  return <AppShell>{renderPage(path, user.isSuperAdmin === true)}</AppShell>;
 }
 
-function renderPage(path: string): JSX.Element {
+function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/' || path === '') return <DashboardPage />;
   if (path === '/contas-pagar') return <ContasPagarPage />;
   if (path === '/contas-receber') return <ContasReceberPage />;
+
+  // Empresas: console de gestao cross-tenant, so pra super-admin.
+  if (path === '/empresas') return isSuperAdmin ? <EmpresasPage /> : <ComingSoon label="Empresas" />;
+  const usuariosParams = matchRoute('/empresas/:tenantId/usuarios', path);
+  if (usuariosParams) return isSuperAdmin ? <UsuariosPage tenantId={usuariosParams.tenantId!} /> : <ComingSoon label="Usuários" />;
 
   const label = COMING_SOON[path];
   if (label) return <ComingSoon label={label} />;

@@ -7,6 +7,7 @@ interface NavItem {
   label: string;
   path: string;
   icon: string;
+  superAdminOnly?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -27,7 +28,7 @@ const NAV: NavItem[] = [
   { label: 'Relatórios', path: '/relatorios', icon: '📈' },
   { label: 'Produtos', path: '/produtos', icon: '📦' },
   { label: 'Clientes', path: '/clientes', icon: '👥' },
-  { label: 'Empresas', path: '/empresas', icon: '🏢' },
+  { label: 'Empresas', path: '/empresas', icon: '🏢', superAdminOnly: true },
 ];
 
 export function AppShell({ children }: { children: ReactNode }): JSX.Element {
@@ -72,7 +73,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         </div>
         <TenantSelector />
         <nav className="flex-1 py-3 space-y-1 overflow-y-auto">
-          {NAV.map((item) => (
+          {NAV.filter((item) => !item.superAdminOnly || user?.isSuperAdmin).map((item) => (
             <button
               key={item.path}
               onClick={() => go(item.path)}
