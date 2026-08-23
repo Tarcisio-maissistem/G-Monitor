@@ -29,17 +29,10 @@ type StatusFilter = 'todos' | 'pending' | 'paid' | 'overdue';
 const STATUS_LABEL: Record<Receivable['status'], string> = { pending: 'a receber', paid: 'recebido', overdue: 'vencido' };
 
 export function ContasReceberPage(): JSX.Element {
+  // Padrao: mes atual, do dia 1 ate hoje (nao "ultimos 30 dias" — pedido do dono 23/08).
   const today = useMemo(() => new Date(), []);
-  const defaultFrom = useMemo(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
-  }, [today]);
-  const defaultTo = useMemo(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 60);
-    return d.toISOString().slice(0, 10);
-  }, [today]);
+  const defaultFrom = useMemo(() => new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)).toISOString().slice(0, 10), [today]);
+  const defaultTo = useMemo(() => today.toISOString().slice(0, 10), [today]);
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
