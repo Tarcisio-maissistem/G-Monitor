@@ -303,7 +303,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
       });
 
       await tx.agent.update({ where: { id: ctx.agentId }, data: { lastSeenAt: new Date() } });
-    });
+    }, { timeout: 60_000 }); // lote de ate 1000 upserts sequenciais passa do timeout padrao (5s) do Prisma
 
     return { persisted };
   });
