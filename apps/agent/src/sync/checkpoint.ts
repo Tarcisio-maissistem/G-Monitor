@@ -1,31 +1,44 @@
-import Database from 'better-sqlite3';
+import fs from 'node:fs';
 import path from 'node:path';
 import { getDataDir } from '../config.js';
 
-// Checkpoints locais por tabela em SQLite.
-// Caminho: %PROGRAMDATA%\GMonitor\sync.db
+// Checkpoints locais por tabela — arquivo JSON simples, nao SQLite.
+// E so um mapa table_name -> {checkpoint, lastSyncedAt}, nao precisa de banco de verdade
+// e evita depender de compilacao nativa (better-sqlite3 exige Visual Studio Build Tools
+// se nao houver prebuild pra versao/arch do Node do cliente — achado 22/08 no piloto).
+// Caminho: %PROGRAMDATA%\GMonitor\sync.json
 
-const dbPath = path.join(getDataDir(), 'sync.db');
-const db = new Database(dbPath);
+interface CheckpointRow {
+  checkpoint: string;
+  lastSyncedAt: string;
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sync_checkpoints (
-    table_name TEXT PRIMARY KEY,
-    checkpoint TEXT NOT NULL,
-    last_synced_at TEXT NOT NULL
-  )
-`);
+const filePath = path.join(getDataDir(), 'sync.json');
+
+function readAll(): Record<string, CheckpointRow> {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeAll(data: Record<string, CheckpointRow>): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  // Escreve em arquivo temporario e renomeia — evita corromper o arquivo se o processo
+  // morrer no meio da escrita.
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, filePath);
+}
 
 export function getCheckpoint(table: string): string | null {
-  const row = db.prepare('SELECT checkpoint FROM sync_checkpoints WHERE table_name = ?').get(table) as
-    | { checkpoint: string }
-    | undefined;
-  return row?.checkpoint ?? null;
+  return readAll()[table]?.checkpoint ?? null;
 }
 
 export function setCheckpoint(table: string, checkpoint: string): void {
-  db.prepare(
-    'INSERT INTO sync_checkpoints(table_name, checkpoint, last_synced_at) VALUES (?, ?, ?) ' +
-      'ON CONFLICT(table_name) DO UPDATE SET checkpoint = excluded.checkpoint, last_synced_at = excluded.last_synced_at',
-  ).run(table, checkpoint, new Date().toISOString());
+  const data = readAll();
+  data[table] = { checkpoint, lastSyncedAt: new Date().toISOString() };
+  writeAll(data);
 }

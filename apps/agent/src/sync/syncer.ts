@@ -36,10 +36,18 @@ async function syncSales(cfg: AgentConfig): Promise<number> {
   const checkpoint = getCheckpoint('sales') ?? '0';
   const afterId = Number(checkpoint);
   // SQL usa FIRST N — primeiro parametro é o limit, depois afterId.
-  const rows = await pool.query<{ source_id: number; sale_date: string; total_value: number }>(
-    entry.sql,
-    [BATCH_SIZE, afterId],
-  );
+  const rows = await pool.query<{
+    source_id: number;
+    sale_date: string;
+    customer_source_id: string | null;
+    operator_name: string | null;
+    caixa: string | null;
+    modelo: string | null;
+    natureza: string | null;
+    total_value: number;
+    cancelled: number | string;
+    processed: number | string;
+  }>(entry.sql, [BATCH_SIZE, afterId]);
   if (rows.length === 0) return 0;
 
   const camelRows = rows.map((r) => ({
