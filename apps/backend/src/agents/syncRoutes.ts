@@ -100,6 +100,11 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               },
               update: {
                 saleDate: new Date(String(r.saleDate)),
+                customerSourceId: r.customerSourceId ? String(r.customerSourceId) : null,
+                operatorName: r.operatorName ? String(r.operatorName) : null,
+                caixa: r.caixa ? String(r.caixa) : null,
+                modelo: r.modelo ? String(r.modelo) : null,
+                natureza: r.natureza ? String(r.natureza) : null,
                 totalValue: Number(r.totalValue ?? 0),
                 cancelled: Boolean(r.cancelled),
                 processed: Boolean(r.processed ?? true),
@@ -142,6 +147,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               totalValue: Number(r.totalValue ?? 0),
             },
             update: {
+              productCode: r.productCode ? String(r.productCode) : null,
+              description: r.description ? String(r.description) : null,
               quantity: Number(r.quantity ?? 0),
               unitValue: Number(r.unitValue ?? 0),
               totalValue: Number(r.totalValue ?? 0),
@@ -195,6 +202,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               update: {
                 paymentDate: new Date(String(r.paymentDate)),
                 paymentType: String(r.paymentType ?? 'OUTROS'),
+                especie: r.especie ? String(r.especie) : null,
                 value: Number(r.value ?? 0),
               },
             });
@@ -291,6 +299,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               },
               update: {
                 closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
+                operatorName: r.operatorName ? String(r.operatorName) : null,
                 totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
                 totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
                 difference: r.difference != null ? Number(r.difference) : null,
@@ -328,6 +337,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
                 value: Number(r.value ?? 0),
                 paidValue: Number(r.paidValue ?? 0),
                 paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
+                counterparty: r.counterparty ? String(r.counterparty) : null,
+                description: r.description ? String(r.description) : null,
                 cancelled: Boolean(r.cancelled),
               },
             }),
@@ -363,6 +374,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
                 value: Number(r.value ?? 0),
                 receivedValue: Number(r.receivedValue ?? 0),
                 receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
+                counterparty: r.counterparty ? String(r.counterparty) : null,
+                description: r.description ? String(r.description) : null,
                 cancelled: Boolean(r.cancelled),
               },
             }),
