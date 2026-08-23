@@ -75,7 +75,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     description: 'Pagina de contas a pagar (PAGAR) para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
     sql: `
-      SELECT FIRST ? P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS VALUE,
+      SELECT FIRST ? P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS TOTAL_VALUE,
              COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
              CAST(SUBSTRING(COALESCE(P.NOM_FORNECEDOR, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
              CAST(SUBSTRING(COALESCE(P.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,
@@ -90,7 +90,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     description: 'Pagina de contas a receber (RECEBER) para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
     sql: `
-      SELECT FIRST ? R.ID AS SOURCE_ID, R.VENCIMENTO AS DUE_DATE, R.VALOR_DUP AS VALUE,
+      SELECT FIRST ? R.ID AS SOURCE_ID, R.VENCIMENTO AS DUE_DATE, R.VALOR_DUP AS TOTAL_VALUE,
              COALESCE(R.VALOR_REC, 0) AS RECEIVED_VALUE, R.RECEBIMENTO AS RECEIVED_DATE,
              CAST(SUBSTRING(COALESCE(R.NOM_CLIENTE, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
              CAST(SUBSTRING(COALESCE(R.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,
@@ -107,7 +107,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     description: 'Pagina de contas a pagar (CONTAS_PAGAR, variante nao confirmada) para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
     sql: `
-      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS VALUE,
+      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS TOTAL_VALUE,
              COALESCE(C.VALOR_PAGO, 0) AS PAID_VALUE, C.DT_PAGTO AS PAID_DATE,
              CAST(SUBSTRING(COALESCE(C.FORNECEDOR, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
              CAST(SUBSTRING(COALESCE(C.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,
@@ -122,7 +122,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     description: 'Pagina de contas a receber (CONTAS_RECEBER, variante nao confirmada) para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
     sql: `
-      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS VALUE,
+      SELECT FIRST ? C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS TOTAL_VALUE,
              COALESCE(C.VALOR_RECEBIDO, 0) AS RECEIVED_VALUE, C.DT_RECEBIMENTO AS RECEIVED_DATE,
              CAST(SUBSTRING(COALESCE(C.CLIENTE, '') FROM 1 FOR 60) AS VARCHAR(60)) AS COUNTERPARTY,
              CAST(SUBSTRING(COALESCE(C.HISTORICO, '') FROM 1 FOR 100) AS VARCHAR(100)) AS DESCRIPTION,

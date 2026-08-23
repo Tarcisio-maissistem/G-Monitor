@@ -108,7 +108,7 @@ function syncPayables(cfg: AgentConfig): Promise<number> {
     (r) => ({
       sourceId: String(r['source_id']),
       dueDate: new Date(String(r['due_date'])).toISOString(),
-      value: Number(r['value']),
+      value: Number(r['total_value']),
       paidValue: Number(r['paid_value'] ?? 0),
       paidDate: r['paid_date'] ? new Date(String(r['paid_date'])).toISOString() : null,
       counterparty: r['counterparty'] || null,
@@ -127,7 +127,7 @@ function syncReceivables(cfg: AgentConfig): Promise<number> {
     (r) => ({
       sourceId: String(r['source_id']),
       dueDate: new Date(String(r['due_date'])).toISOString(),
-      value: Number(r['value']),
+      value: Number(r['total_value']),
       receivedValue: Number(r['received_value'] ?? 0),
       receivedDate: r['received_date'] ? new Date(String(r['received_date'])).toISOString() : null,
       counterparty: r['counterparty'] || null,
