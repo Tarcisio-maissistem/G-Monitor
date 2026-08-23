@@ -94,34 +94,56 @@ export function ContasReceberPage(): JSX.Element {
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-400">Sem contas a receber no período.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
-                <tr>
-                  <th className="px-3 py-2 text-left">Nº</th>
-                  <th className="px-3 py-2 text-left">Vencimento</th>
-                  <th className="px-3 py-2 text-left">Cliente</th>
-                  <th className="px-3 py-2 text-left">Histórico</th>
-                  <th className="px-3 py-2 text-right">Valor</th>
-                  <th className="px-3 py-2 text-right">Recebido</th>
-                  <th className="px-3 py-2 text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.sourceId} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2 font-mono text-xs">{row.sourceId}</td>
-                    <td className="px-3 py-2">{new Date(row.dueDate).toLocaleDateString('pt-BR')}</td>
-                    <td className="px-3 py-2">{row.counterparty ?? '-'}</td>
-                    <td className="px-3 py-2 text-slate-600">{row.description ?? '-'}</td>
-                    <td className="px-3 py-2 text-right font-medium">{formatBRL(row.value)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{row.receivedValue > 0 ? formatBRL(row.receivedValue) : '-'}</td>
-                    <td className="px-3 py-2 text-center"><StatusBadge status={row.status} /></td>
+          <>
+            {/* Celular: cards empilhados — mesma logica do ContasPagarPage.tsx. */}
+            <div className="sm:hidden divide-y">
+              {rows.map((row) => (
+                <div key={row.sourceId} className="p-3 space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-slate-800">{row.counterparty ?? '-'}</div>
+                      <div className="text-xs text-slate-500">{row.description ?? '-'}</div>
+                    </div>
+                    <StatusBadge status={row.status} />
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-500">{new Date(row.dueDate).toLocaleDateString('pt-BR')} · #{row.sourceId}</span>
+                    <span className="font-medium">{formatBRL(row.value)}</span>
+                  </div>
+                  {row.receivedValue > 0 && <div className="text-xs text-slate-500 text-right">recebido {formatBRL(row.receivedValue)}</div>}
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Nº</th>
+                    <th className="px-3 py-2 text-left">Vencimento</th>
+                    <th className="px-3 py-2 text-left">Cliente</th>
+                    <th className="px-3 py-2 text-left">Histórico</th>
+                    <th className="px-3 py-2 text-right">Valor</th>
+                    <th className="px-3 py-2 text-right">Recebido</th>
+                    <th className="px-3 py-2 text-center">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.sourceId} className="border-t hover:bg-slate-50">
+                      <td className="px-3 py-2 font-mono text-xs">{row.sourceId}</td>
+                      <td className="px-3 py-2">{new Date(row.dueDate).toLocaleDateString('pt-BR')}</td>
+                      <td className="px-3 py-2">{row.counterparty ?? '-'}</td>
+                      <td className="px-3 py-2 text-slate-600">{row.description ?? '-'}</td>
+                      <td className="px-3 py-2 text-right font-medium">{formatBRL(row.value)}</td>
+                      <td className="px-3 py-2 text-right text-slate-600">{row.receivedValue > 0 ? formatBRL(row.receivedValue) : '-'}</td>
+                      <td className="px-3 py-2 text-center"><StatusBadge status={row.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>

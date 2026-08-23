@@ -158,36 +158,61 @@ function DayDrilldown({ kind, date, onClose }: { kind: 'payables' | 'receivables
           {query.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
           {!query.isLoading && rows.length === 0 && <div className="text-slate-400 text-sm">Nada nesse dia.</div>}
           {rows.length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-500 border-b">
-                  <th className="text-left pb-2 font-medium">{label}</th>
-                  <th className="text-left pb-2 font-medium">Histórico</th>
-                  <th className="text-right pb-2 font-medium">Valor</th>
-                  <th className="text-right pb-2 font-medium">{settledLabel}</th>
-                  <th className="text-center pb-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              {/* Celular: cards — 5 colunas nao cabem no modal (max-w-2xl com p-4 sobra
+                  ~358px numa tela de 390px). */}
+              <div className="sm:hidden divide-y">
                 {rows.map((r) => (
-                  <tr key={r.sourceId} className="border-b border-slate-50">
-                    <td className="py-2 pr-2 text-slate-700">{r.counterparty ?? '-'}</td>
-                    <td className="py-2 pr-2 text-slate-500">{r.description ?? '-'}</td>
-                    <td className="py-2 text-right font-medium">{formatBRL(r.value)}</td>
-                    <td className="py-2 text-right text-slate-600">{formatBRL(r.paidValue ?? r.receivedValue ?? 0)}</td>
-                    <td className="py-2 text-center">
+                  <div key={r.sourceId} className="py-2 space-y-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-medium text-slate-700 text-sm">{r.counterparty ?? '-'}</div>
+                        <div className="text-xs text-slate-500">{r.description ?? '-'}</div>
+                      </div>
                       <span
-                        className={`px-2 py-0.5 rounded text-xs ${
+                        className={`px-2 py-0.5 rounded text-xs shrink-0 ${
                           r.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : r.status === 'overdue' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
                         }`}
                       >
                         {STATUS_LABEL[r.status]}
                       </span>
-                    </td>
-                  </tr>
+                    </div>
+                    <div className="text-sm font-medium text-right">{formatBRL(r.value)}</div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+
+              <table className="hidden sm:table w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b">
+                    <th className="text-left pb-2 font-medium">{label}</th>
+                    <th className="text-left pb-2 font-medium">Histórico</th>
+                    <th className="text-right pb-2 font-medium">Valor</th>
+                    <th className="text-right pb-2 font-medium">{settledLabel}</th>
+                    <th className="text-center pb-2 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.sourceId} className="border-b border-slate-50">
+                      <td className="py-2 pr-2 text-slate-700">{r.counterparty ?? '-'}</td>
+                      <td className="py-2 pr-2 text-slate-500">{r.description ?? '-'}</td>
+                      <td className="py-2 text-right font-medium">{formatBRL(r.value)}</td>
+                      <td className="py-2 text-right text-slate-600">{formatBRL(r.paidValue ?? r.receivedValue ?? 0)}</td>
+                      <td className="py-2 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs ${
+                            r.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : r.status === 'overdue' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {STATUS_LABEL[r.status]}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </div>
       </div>
