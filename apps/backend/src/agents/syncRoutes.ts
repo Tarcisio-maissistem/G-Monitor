@@ -42,7 +42,10 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-const SYNC_CONCURRENCY = 8; // abaixo do connection_limit default do Prisma (9)
+// Deixa uma boa folga do connection_limit do DATABASE_URL pro resto do app (login, dashboard,
+// relatorios) nao passar fome enquanto o sync de um backlog grande roda em segundo plano —
+// achado ao vivo no piloto 22/08 (login e telas ficando lentos com concorrencia = quase o limite).
+const SYNC_CONCURRENCY = 6;
 
 async function authenticateAgent(
   authHeader: string | undefined,

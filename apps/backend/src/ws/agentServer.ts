@@ -41,6 +41,15 @@ export async function registerAgentWs(app: FastifyInstance): Promise<void> {
     registerAgent(agent.id, ws);
     logger.info({ agentId: agent.id, sessionId: session.id }, 'agent ws connected');
 
+    // lastSeenAt tambem e tocado no fim de cada lote de sync (syncRoutes.ts), mas isso pode
+    // demorar minutos num backlog grande — sem isso aqui, o agente aparece "offline" (>5min
+    // sem lastSeenAt) mesmo com a conexao WS ativa e o heartbeat respondendo. Achado ao vivo
+    // no piloto 22/08.
+    void prisma.agent.update({ where: { id: agent.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+    ws.on('ping', () => {
+      void prisma.agent.update({ where: { id: agent.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+    });
+
     ws.on('message', async (raw: Buffer) => {
       let envelope: unknown;
       try {
