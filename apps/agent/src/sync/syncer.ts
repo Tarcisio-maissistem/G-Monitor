@@ -211,6 +211,18 @@ function syncReceivables(cfg: AgentConfig): Promise<number> {
   );
 }
 
+// DESLIGADO em 24/08 (incidente real): ITEVENDAS tem 652 mil linhas e MOV_OPERADORES 195 mil
+// (medido ao vivo no piloto). Mesmo no ritmo mais conservador (lote 200, concorrencia 2,
+// intervalo 90s) o backlog levaria DIAS pra terminar, e nesse meio tempo continuou
+// derrubando /api/reports/* do Tarcisio com P1001 "Can't reach database server" (pooler do
+// Supabase sem folga). Confirmado isolando a causa: com o agente TOTALMENTE parado, 9/9
+// chamadas de relatorio funcionaram; com ele sincronizando essas 2 tabelas, voltou a falhar.
+// Prioridade e a estabilidade do que ja esta em producao (sales/payables/receivables, que
+// nunca deram esse problema) sobre completar Curva ABC/Formas de Pagamento rapido. Precisa
+// de uma estrategia mais leve (ex: bulk insert em vez de upsert por linha, ou rodar so fora
+// do horario de uso) antes de religar — nao e so questao de esperar terminar.
+const SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED = false;
+
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
   // Trava contra sobreposicao: setInterval dispara um novo tick mesmo se o anterior ainda
   // estiver rodando. Se um tick demorar mais que syncIntervalMs (rede lenta, tabela grande),
@@ -231,17 +243,19 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
       } catch (err) {
         logger.error({ err }, 'sync tick failed');
       }
-      try {
-        const persisted = await syncSaleItems(cfg);
-        if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
-      } catch (err) {
-        logger.error({ err }, 'sync tick failed (saleItems)');
-      }
-      try {
-        const persisted = await syncPayments(cfg);
-        if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
-      } catch (err) {
-        logger.error({ err }, 'sync tick failed (payments)');
+      if (SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED) {
+        try {
+          const persisted = await syncSaleItems(cfg);
+          if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
+        } catch (err) {
+          logger.error({ err }, 'sync tick failed (saleItems)');
+        }
+        try {
+          const persisted = await syncPayments(cfg);
+          if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
+        } catch (err) {
+          logger.error({ err }, 'sync tick failed (payments)');
+        }
       }
       try {
         const persisted = await syncPayables(cfg);
