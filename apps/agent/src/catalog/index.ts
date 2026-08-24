@@ -68,6 +68,39 @@ export const CATALOG: Record<string, CatalogEntry> = {
       ORDER BY V.ID ASC
     `,
   },
+  // ITEVENDAS/MOV_OPERADORES — CONFIRMADAS em producao (cliente piloto, 23/08) via
+  // RDB$RELATION_FIELDS. Alimentam abc-products e sales-by-payment no dashboard (ate
+  // 23/08 esses paineis ficavam vazios: agente nunca sincronizava essas 2 tabelas).
+  'sync-sale-items-batch': {
+    id: 'sync-sale-items-batch',
+    description: 'Pagina de itens de venda (ITEVENDAS) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? I.ID AS SOURCE_ID, I.ID_VENDAS AS SALE_SOURCE_ID, I.CODIGO AS PRODUCT_CODE,
+             I.DESCRICAO AS DESCRIPTION, I.QTD AS QUANTITY, I.VALOR_UNITA AS UNIT_VALUE,
+             I.VALOR_TOTAL AS TOTAL_VALUE
+      FROM ITEVENDAS I
+      WHERE I.ID > ?
+      ORDER BY I.ID ASC
+    `,
+  },
+  'sync-payments-batch': {
+    id: 'sync-payments-batch',
+    description: 'Pagina de pagamentos (MOV_OPERADORES) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
+             UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE
+      FROM MOV_OPERADORES M
+      LEFT JOIN (
+        SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
+        FROM PDV_ESPECIES GROUP BY 1
+      ) P ON UPPER(TRIM(M.ESPECIE)) = P.ESP
+      WHERE M.ID > ? AND UPPER(TRIM(M.ESPECIE)) <> 'TROCO'
+      ORDER BY M.ID ASC
+    `,
+  },
   // Variante PAGAR/RECEBER — CONFIRMADA em producao (cliente piloto, 22/08): colunas reais
   // via RDB$RELATION_FIELDS, nao suposicao. Ver design.md D11.
   'sync-payables-batch-pagar': {
