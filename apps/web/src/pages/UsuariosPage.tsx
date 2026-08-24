@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useRoute } from '../lib/router';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import { Spinner } from '../components/Spinner';
 
 interface TenantAccess {
   tenantId: string;
@@ -111,7 +112,9 @@ export function UsuariosPage({ tenantId }: { tenantId: string }): JSX.Element {
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {users.isLoading ? (
-          <div className="p-12 text-center text-slate-400">Carregando...</div>
+          <div className="p-12 text-center text-slate-400 flex items-center justify-center gap-2">
+            <Spinner /> Carregando...
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
@@ -147,8 +150,13 @@ export function UsuariosPage({ tenantId }: { tenantId: string }): JSX.Element {
                         >
                           Acessos
                         </button>
-                        <button onClick={() => askDelete(u)} className="text-red-600 hover:underline text-xs">
-                          Excluir
+                        <button
+                          onClick={() => askDelete(u)}
+                          disabled={remove.isPending && remove.variables === u.id}
+                          className="text-red-600 hover:underline text-xs disabled:opacity-50 inline-flex items-center gap-1"
+                        >
+                          {remove.isPending && remove.variables === u.id && <Spinner className="h-3 w-3" />}
+                          {remove.isPending && remove.variables === u.id ? 'Excluindo...' : 'Excluir'}
                         </button>
                       </>
                     )}
@@ -242,7 +250,9 @@ function AccessModal({
         </p>
 
         {allTenants.isLoading || accesses.isLoading ? (
-          <p className="text-slate-400 text-sm py-6 text-center">Carregando...</p>
+          <p className="text-slate-400 text-sm py-6 text-center flex items-center justify-center gap-2">
+            <Spinner /> Carregando...
+          </p>
         ) : tenants.length === 0 ? (
           <p className="text-slate-400 text-sm py-6 text-center">
             Nenhuma outra empresa cadastrada. Cadastre mais empresas pra usar esse recurso.
@@ -251,21 +261,25 @@ function AccessModal({
           <div className="max-h-72 overflow-y-auto border rounded divide-y">
             {tenants.map((t) => {
               const has = accessSet.has(t.id);
+              const isPendingHere = (grant.isPending && grant.variables === t.id) || (revoke.isPending && revoke.variables === t.id);
               return (
                 <label
                   key={t.id}
                   className="flex items-center justify-between px-4 py-2 hover:bg-slate-50 cursor-pointer"
                 >
                   <span className="font-medium text-sm">{t.name}</span>
-                  <input
-                    type="checkbox"
-                    checked={has}
-                    disabled={grant.isPending || revoke.isPending}
-                    onChange={(e) => {
-                      if (e.target.checked) grant.mutate(t.id);
-                      else revoke.mutate(t.id);
-                    }}
-                  />
+                  <span className="flex items-center gap-2">
+                    {isPendingHere && <Spinner className="h-3.5 w-3.5 text-slate-400" />}
+                    <input
+                      type="checkbox"
+                      checked={has}
+                      disabled={grant.isPending || revoke.isPending}
+                      onChange={(e) => {
+                        if (e.target.checked) grant.mutate(t.id);
+                        else revoke.mutate(t.id);
+                      }}
+                    />
+                  </span>
                 </label>
               );
             })}
@@ -363,8 +377,9 @@ function NewUserModal({
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 inline-flex items-center gap-2"
           >
+            {loading && <Spinner className="h-3.5 w-3.5" />}
             {loading ? 'Criando...' : 'Criar usuário'}
           </button>
         </div>

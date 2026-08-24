@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { copyToClipboard } from '../lib/clipboard';
+import { useToast } from '../components/Toast';
+import { Spinner } from '../components/Spinner';
 
 interface SalesSummary {
   data: {
@@ -50,6 +53,7 @@ export function DashboardPage(): JSX.Element {
   const mesAtualLabel = today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
   const [showAllOperators, setShowAllOperators] = useState(false);
+  const toast = useToast();
 
   const summary = useQuery({ queryKey: ['sales-summary', from, to], queryFn: () => api<SalesSummary>(`/api/reports/sales-summary?${qs}`) });
   const abc = useQuery({ queryKey: ['abc-products', from, to], queryFn: () => api<AbcProducts>(`/api/reports/abc-products?${qs}`) });
@@ -58,6 +62,12 @@ export function DashboardPage(): JSX.Element {
 
   const staleness = summary.data?.meta.stalenessSeconds;
   const agentsOffline = summary.data?.meta.agentsOffline ?? [];
+
+  const handleCopyResumo = async (): Promise<void> => {
+    const text = buildWhatsAppResumo(mesAtualLabel, summary.data?.data, payments.data?.data, operators.data?.data);
+    const ok = await copyToClipboard(text);
+    toast.push(ok ? { type: 'success', message: 'Resumo copiado — cole no WhatsApp.' } : { type: 'error', message: 'Não consegui copiar. Tente selecionar o texto manualmente.' });
+  };
 
   return (
     <div className="p-3 sm:p-6 space-y-6 max-w-7xl mx-auto">
@@ -74,8 +84,20 @@ export function DashboardPage(): JSX.Element {
 
       {/* KPIs */}
       <section>
-        <h2 className="text-lg font-semibold text-slate-700 mb-3">Resumo de {mesAtualLabel}</h2>
-        {summary.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h2 className="text-lg font-semibold text-slate-700">Resumo de {mesAtualLabel}</h2>
+          <button
+            onClick={() => void handleCopyResumo()}
+            disabled={!summary.data}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            title="Copiar resumo formatado pra colar no WhatsApp"
+          >
+            <span>📋</span> Copiar p/ WhatsApp
+          </button>
+        </div>
+        {summary.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
         {summary.error && <ErrorBox msg={(summary.error as Error).message} />}
         {summary.data && summary.data.data.quantity === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
         {summary.data && summary.data.data.quantity > 0 && (
@@ -93,7 +115,9 @@ export function DashboardPage(): JSX.Element {
         {/* Formas de pagamento */}
         <section className="bg-white rounded-xl shadow-sm border p-5">
           <h3 className="font-semibold text-slate-700 mb-4">Formas de Pagamento</h3>
-          {payments.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+          {payments.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
           {payments.error && <ErrorBox msg={(payments.error as Error).message} />}
           {payments.data && payments.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
           {payments.data && payments.data.data.rows.length > 0 && (
@@ -119,7 +143,9 @@ export function DashboardPage(): JSX.Element {
         {/* Ranking de vendedores */}
         <section className="bg-white rounded-xl shadow-sm border p-5">
           <h3 className="font-semibold text-slate-700 mb-4">Ranking de Vendedores</h3>
-          {operators.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+          {operators.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
           {operators.error && <ErrorBox msg={(operators.error as Error).message} />}
           {operators.data && operators.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
           {operators.data && operators.data.data.rows.length > 0 && (
@@ -148,7 +174,9 @@ export function DashboardPage(): JSX.Element {
       {/* Curva ABC */}
       <section className="bg-white rounded-xl shadow-sm border p-5">
         <h3 className="font-semibold text-slate-700 mb-4">Curva ABC — Top 20 Produtos</h3>
-        {abc.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+        {abc.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
         {abc.error && <ErrorBox msg={(abc.error as Error).message} />}
         {abc.data && abc.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
         {abc.data && abc.data.data.rows.length > 0 && (
@@ -202,6 +230,43 @@ function EmptyPeriod({ mesAtualLabel }: { mesAtualLabel: string }): JSX.Element 
       Nenhuma venda registrada em {mesAtualLabel} no GDOOR.
     </div>
   );
+}
+
+// Monta o texto no formato do WhatsApp (*negrito*, sem HTML) — pedido do dono 24/08, pra
+// mandar o resumo do dia/mes direto pro grupo/cliente sem precisar redigitar numero.
+function buildWhatsAppResumo(
+  mesLabel: string,
+  summary?: SalesSummary['data'],
+  payments?: SalesByPayment['data'],
+  operators?: OperatorCommission['data'],
+): string {
+  const lines: string[] = [`📊 *Resumo de ${mesLabel}*`, ''];
+
+  if (summary && summary.quantity > 0) {
+    lines.push(`💰 Faturamento: *${formatBRL(summary.total)}*`);
+    lines.push(`🛒 Vendas: ${summary.quantity.toLocaleString('pt-BR')}`);
+    lines.push(`🎫 Ticket médio: ${formatBRL(summary.ticket)}`);
+    lines.push(`👥 Clientes únicos: ${summary.uniqueCustomers.toLocaleString('pt-BR')}`);
+  } else {
+    lines.push('Nenhuma venda registrada nesse período.');
+  }
+
+  if (payments && payments.rows.length > 0) {
+    lines.push('', '💳 *Formas de Pagamento*');
+    for (const r of payments.rows.slice(0, 6)) {
+      lines.push(`${r.paymentType}: ${formatBRL(r.total)} (${(r.pct * 100).toFixed(0)}%)`);
+    }
+  }
+
+  if (operators && operators.rows.length > 0) {
+    lines.push('', '🏆 *Top Vendedores*');
+    operators.rows.slice(0, 5).forEach((r, i) => {
+      lines.push(`${i + 1}. ${r.operator} — ${formatBRL(r.total)}`);
+    });
+  }
+
+  lines.push('', '_Gerado pelo G-Monitor_');
+  return lines.join('\n');
 }
 
 function ErrorBox({ msg }: { msg: string }): JSX.Element {

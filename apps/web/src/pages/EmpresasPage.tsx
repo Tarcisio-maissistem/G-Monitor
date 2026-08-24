@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast';
 import { MaskedInput } from '../components/MaskedInput';
 import { applyCpfOrCnpj } from '../lib/masks';
 import { useConfirm } from '../components/ConfirmDialog';
+import { Spinner } from '../components/Spinner';
 
 interface Tenant {
   id: string;
@@ -29,6 +30,7 @@ export function EmpresasPage(): JSX.Element {
   const toast = useToast();
   const confirm = useConfirm();
   const [openModal, setOpenModal] = useState(false);
+  const [loadingAgentFor, setLoadingAgentFor] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'tenants'],
@@ -67,6 +69,7 @@ export function EmpresasPage(): JSX.Element {
 
   // Navega direto pra pagina do agente da loja principal (modelo simplificado)
   const goToAgent = async (tenantId: string): Promise<void> => {
+    setLoadingAgentFor(tenantId);
     try {
       const r = await api<{ store: Store | null }>(`/api/admin/tenants/${tenantId}/primary-store`);
       if (r.store) {
@@ -76,6 +79,8 @@ export function EmpresasPage(): JSX.Element {
       }
     } catch (e) {
       toast.push({ type: 'error', message: `Erro: ${(e as Error).message}` });
+    } finally {
+      setLoadingAgentFor(null);
     }
   };
 
@@ -94,7 +99,11 @@ export function EmpresasPage(): JSX.Element {
         </button>
       </div>
 
-      {isLoading && <div className="text-slate-400">Carregando...</div>}
+      {isLoading && (
+        <div className="text-slate-400 flex items-center gap-2 py-4">
+          <Spinner /> Carregando...
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="w-full text-sm">
@@ -112,7 +121,8 @@ export function EmpresasPage(): JSX.Element {
             {(data?.tenants ?? []).map((t) => (
               <tr key={t.id} className="border-t hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium">
-                  <button onClick={() => goToAgent(t.id)} className="text-blue-700 hover:underline">
+                  <button onClick={() => void goToAgent(t.id)} disabled={loadingAgentFor === t.id} className="text-blue-700 hover:underline inline-flex items-center gap-1.5 disabled:opacity-60">
+                    {loadingAgentFor === t.id && <Spinner className="h-3 w-3" />}
                     {t.name}
                   </button>
                 </td>
@@ -136,16 +146,19 @@ export function EmpresasPage(): JSX.Element {
                     Usuários
                   </button>
                   <button
-                    onClick={() => goToAgent(t.id)}
-                    className="text-blue-600 hover:underline text-xs"
+                    onClick={() => void goToAgent(t.id)}
+                    disabled={loadingAgentFor === t.id}
+                    className="text-blue-600 hover:underline text-xs disabled:opacity-60 inline-flex items-center gap-1"
                   >
+                    {loadingAgentFor === t.id && <Spinner className="h-3 w-3" />}
                     Servidor
                   </button>
                   <button
                     onClick={() => handleDelete(t)}
                     disabled={remove.isPending}
-                    className="text-red-600 hover:underline text-xs disabled:opacity-50"
+                    className="text-red-600 hover:underline text-xs disabled:opacity-50 inline-flex items-center gap-1"
                   >
+                    {remove.isPending && remove.variables === t.id && <Spinner className="h-3 w-3" />}
                     {remove.isPending && remove.variables === t.id ? 'Excluindo...' : 'Excluir'}
                   </button>
                 </td>
@@ -255,8 +268,9 @@ function NewTenantModal({
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 inline-flex items-center gap-2"
           >
+            {loading && <Spinner className="h-3.5 w-3.5" />}
             {loading ? 'Criando...' : 'Criar empresa'}
           </button>
         </div>

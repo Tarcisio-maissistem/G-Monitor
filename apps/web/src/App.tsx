@@ -7,6 +7,8 @@ import { ContasReceberPage } from './pages/ContasReceberPage';
 import { EmpresasPage } from './pages/EmpresasPage';
 import { UsuariosPage } from './pages/UsuariosPage';
 import { AppShell } from './components/AppShell';
+import { ToastContainer } from './components/Toast';
+import { ConfirmDialog } from './components/ConfirmDialog';
 
 // Paginas trazidas do trabalho local do Tarcisio (servidor ms-gestor, nunca commitado —
 // resgatado 23/08) que ainda nao tem backend correspondente. Aparecem no menu (o AppShell
@@ -32,9 +34,16 @@ export function App(): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const { path } = useRoute();
 
-  if (!user) return <LoginPage />;
-
-  return <AppShell>{renderPage(path, user.isSuperAdmin === true)}</AppShell>;
+  return (
+    <>
+      {!user ? <LoginPage /> : <AppShell>{renderPage(path, user.isSuperAdmin === true)}</AppShell>}
+      {/* Montados uma vez aqui — achado 24/08: existiam mas nunca eram renderizados em
+          lugar nenhum, entao os toasts de sucesso/erro (Empresas, Usuarios) e as
+          confirmacoes de exclusao nunca apareciam de verdade na tela. */}
+      <ToastContainer />
+      <ConfirmDialog />
+    </>
+  );
 }
 
 function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
