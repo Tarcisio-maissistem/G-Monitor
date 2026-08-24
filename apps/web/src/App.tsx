@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { useAuthStore } from './stores/authStore';
 import { useRoute, matchRoute } from './lib/router';
+import { refreshSession } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContasPagarPage } from './pages/ContasPagarPage';
@@ -32,7 +34,34 @@ const COMING_SOON: Record<string, string> = {
 
 export function App(): JSX.Element {
   const user = useAuthStore((s) => s.user);
+  const login = useAuthStore((s) => s.login);
   const { path } = useRoute();
+  const [bootstrapping, setBootstrapping] = useState(true);
+
+  // Ao carregar a pagina (F5, aba nova), troca o cookie httpOnly de refresh por um access
+  // token novo antes de decidir mostrar a tela de login — pedido do dono 24/08: "toda vez
+  // que atualiza a pagina pede login". O token em si so vive em memoria (nunca em
+  // localStorage — evita expor o JWT a XSS); o cookie httpOnly e que sobrevive ao F5.
+  useEffect(() => {
+    let cancelled = false;
+    refreshSession().then((res) => {
+      if (cancelled) return;
+      if (res) login(res.accessToken, res.user, res.tenant.id, res.tenant.name);
+      setBootstrapping(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (bootstrapping) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">
+        Carregando...
+      </div>
+    );
+  }
 
   return (
     <>
