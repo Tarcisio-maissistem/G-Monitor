@@ -42,6 +42,23 @@ export async function switchMyTenant(tenantId: string): Promise<{ token: string;
   return api(`/api/users/me/tenant-access/${tenantId}/switch`, { method: 'POST' });
 }
 
+export interface RefreshResponse {
+  accessToken: string;
+  user: { id: string; name: string; email: string; role: string; isSuperAdmin?: boolean };
+  tenant: { id: string; name: string };
+}
+
+// Troca o cookie httpOnly "refresh" por um access token novo — chamado uma vez ao carregar
+// a pagina, pra nao pedir login de novo so por causa de um F5 (pedido do dono 24/08).
+// null = sem sessao valida (usuario realmente precisa logar), nao um erro pra mostrar.
+export async function refreshSession(): Promise<RefreshResponse | null> {
+  try {
+    return await api<RefreshResponse>('/api/auth/refresh', { method: 'POST' });
+  } catch {
+    return null;
+  }
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');

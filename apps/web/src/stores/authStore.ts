@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { setAccessToken } from '../lib/api';
+import { setAccessToken, api } from '../lib/api';
 
 interface AuthState {
   user: { id: string; name: string; email: string; role: string; isSuperAdmin?: boolean } | null;
@@ -8,7 +8,7 @@ interface AuthState {
   activeTenantName: string | null;
   login(token: string, user: AuthState['user'], tenantId?: string, tenantName?: string): void;
   switchTenant(token: string, tenantId: string, tenantName: string): void;
-  logout(): void;
+  logout(): Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -24,7 +24,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     setAccessToken(token);
     set({ token, activeTenantId: tenantId, activeTenantName: tenantName });
   },
-  logout() {
+  async logout() {
+    // Precisa avisar o backend (revoga o refresh token + limpa o cookie httpOnly) —
+    // achado 24/08: so limpava o estado local, entao o cookie continuava valido e o
+    // auto-login ao recarregar a pagina (refreshSession) logava de volta sozinho.
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setAccessToken(null);
     set({ token: null, user: null, activeTenantId: null, activeTenantName: null });
   },
