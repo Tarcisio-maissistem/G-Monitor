@@ -12,6 +12,23 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 // TTL curto (45s) porque o agente sincroniza a cada 30s; nao precisa de precisao ao segundo.
 const REPORT_CACHE_TTL_SECONDS = 45;
 
+// Retry curto pra P1001 ("Can't reach database server") — visto ao vivo 24/08 como blip
+// raro e transitorio (~1 em 120 chamadas, sem relacao com carga do proprio app), tipico de
+// conexao de nuvem sobre a internet. Uma unica tentativa extra depois de 300ms resolve sem
+// o usuario nem perceber, sem mascarar erro persistente (so retenta esse codigo especifico).
+async function withDbRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if ((err as { code?: string }).code === 'P1001') {
+      logger.warn({ err }, 'P1001 (pooler inalcancavel), tentando de novo em 300ms');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return fn();
+    }
+    throw err;
+  }
+}
+
 function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req) => Promise<unknown>) {
   return async (req: Req): Promise<unknown> => {
     const tenantId = (req as unknown as { user?: { tenantId?: string } }).user?.tenantId ?? 'anon';
@@ -23,7 +40,7 @@ function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req
       logger.error({ err }, 'redis cache read failed, seguindo sem cache');
     }
 
-    const result = await handler(req);
+    const result = await withDbRetry(() => handler(req));
 
     try {
       await redis.setex(key, REPORT_CACHE_TTL_SECONDS, JSON.stringify(result));
