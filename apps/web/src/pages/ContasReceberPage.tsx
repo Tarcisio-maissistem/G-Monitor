@@ -2,6 +2,9 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { FinanceCalendar } from '../components/FinanceCalendar';
+import { copyToClipboard } from '../lib/clipboard';
+import { useToast } from '../components/Toast';
+import { Spinner } from '../components/Spinner';
 
 // Espelho de ContasPagarPage.tsx pro lado de receber. Contrato adaptado ao que
 // /api/reports/receivables realmente devolve (ver apps/backend/src/reports/routes.ts).
@@ -45,6 +48,13 @@ export function ContasReceberPage(): JSX.Element {
   });
 
   const rows = r.data?.data ?? [];
+  const toast = useToast();
+
+  const handleCopyResumo = async (): Promise<void> => {
+    const text = buildWhatsAppResumo(from, to, r.data?.summary, rows);
+    const ok = await copyToClipboard(text);
+    toast.push(ok ? { type: 'success', message: 'Resumo copiado — cole no WhatsApp.' } : { type: 'error', message: 'Não consegui copiar. Tente selecionar o texto manualmente.' });
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -53,7 +63,7 @@ export function ContasReceberPage(): JSX.Element {
           <h2 className="text-2xl font-bold">Contas a Receber</h2>
           <p className="text-sm text-slate-500 mt-1">Duplicatas pendentes e recebidas do GDOOR.</p>
         </div>
-        <div className="flex gap-3 items-end">
+        <div className="flex gap-3 items-end flex-wrap">
           <div>
             <label className="block text-xs uppercase text-slate-500 mb-1">Vencimento de</label>
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border rounded px-2 py-1 text-sm" />
@@ -62,6 +72,14 @@ export function ContasReceberPage(): JSX.Element {
             <label className="block text-xs uppercase text-slate-500 mb-1">Até</label>
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border rounded px-2 py-1 text-sm" />
           </div>
+          <button
+            onClick={() => void handleCopyResumo()}
+            disabled={!r.data}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed h-fit"
+            title="Copiar resumo formatado pra colar no WhatsApp"
+          >
+            <span>📋</span> Copiar p/ WhatsApp
+          </button>
         </div>
       </div>
 
@@ -90,7 +108,9 @@ export function ContasReceberPage(): JSX.Element {
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {r.isLoading ? (
-          <div className="p-12 text-center text-slate-400">Carregando...</div>
+          <div className="p-12 text-center text-slate-400 flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-400">Sem contas a receber no período.</div>
         ) : (
@@ -148,6 +168,29 @@ export function ContasReceberPage(): JSX.Element {
       </div>
     </div>
   );
+}
+
+// Texto no formato do WhatsApp — mesma logica do ContasPagarPage.tsx.
+function buildWhatsAppResumo(from: string, to: string, summary: ReceivablesResponse['summary'] | undefined, rows: Receivable[]): string {
+  const fmtDate = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+  const lines: string[] = [`📥 *Contas a Receber* — ${fmtDate(from)} a ${fmtDate(to)}`, ''];
+
+  if (summary) {
+    lines.push(`Total do período: *${formatBRL(summary.total)}*`);
+    lines.push(`A receber: ${formatBRL(summary.pending)}`);
+    lines.push(`Vencido: ${formatBRL(summary.overdue)}`);
+  }
+
+  if (rows.length > 0) {
+    lines.push('', '*Lançamentos:*');
+    for (const row of rows.slice(0, 15)) {
+      lines.push(`${new Date(row.dueDate).toLocaleDateString('pt-BR')} — ${row.counterparty ?? '-'}: ${formatBRL(row.value)} (${STATUS_LABEL[row.status]})`);
+    }
+    if (rows.length > 15) lines.push(`_...e mais ${rows.length - 15} lançamento(s)_`);
+  }
+
+  lines.push('', '_Gerado pelo G-Monitor_');
+  return lines.join('\n');
 }
 
 function StatusBadge({ status }: { status: Receivable['status'] }): JSX.Element {

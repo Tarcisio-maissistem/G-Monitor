@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+import { Spinner } from '../components/Spinner';
 
 interface LoginResponse {
   accessToken: string;
@@ -73,8 +74,9 @@ export function LoginPage(): JSX.Element {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-slate-900 text-white rounded p-2 disabled:opacity-50"
+          className="w-full bg-slate-900 text-white rounded p-2 disabled:opacity-50 flex items-center justify-center gap-2"
         >
+          {loading && <Spinner />}
           {loading ? 'Entrando...' : 'Entrar'}
         </button>
       </form>

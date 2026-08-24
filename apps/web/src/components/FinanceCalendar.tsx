@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { Spinner } from './Spinner';
 
 interface CalendarDay {
   date: string;
@@ -90,7 +91,9 @@ export function FinanceCalendar({ kind }: { kind: 'payables' | 'receivables' }):
         )}
       </div>
 
-      {query.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+      {query.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
       {query.error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded p-3">{(query.error as Error).message}</div>}
 
       {query.data && (
@@ -155,7 +158,9 @@ function DayDrilldown({ kind, date, onClose }: { kind: 'payables' | 'receivables
           </button>
         </div>
         <div className="overflow-y-auto p-4">
-          {query.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
+          {query.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
+            <Spinner className="h-3.5 w-3.5" /> Carregando...
+          </div>}
           {!query.isLoading && rows.length === 0 && <div className="text-slate-400 text-sm">Nada nesse dia.</div>}
           {rows.length > 0 && (
             <>
