@@ -32,8 +32,8 @@ export async function refreshRoute(app: FastifyInstance): Promise<void> {
     }
     if (stored.expiresAt < new Date()) throw Errors.unauthorized('Refresh expirado');
 
-    const user = await prisma.user.findUnique({ where: { id: sub } });
-    if (!user || user.deletedAt) throw Errors.unauthorized();
+    const user = await prisma.user.findUnique({ where: { id: sub }, include: { tenant: true } });
+    if (!user || user.deletedAt || user.tenant.subscriptionStatus === 'suspended') throw Errors.unauthorized();
 
     await prisma.refreshToken.update({ where: { id: stored.id }, data: { usedAt: new Date() } });
 
@@ -55,6 +55,10 @@ export async function refreshRoute(app: FastifyInstance): Promise<void> {
       tid: user.tenantId,
       rol: user.role,
       ...(user.storeId ? { sto: user.storeId } : {}),
+      // Achado 24/08: faltava aqui — depois de 15min (TTL do access token), o refresh
+      // devolvia um token novo SEM a flag de super-admin, derrubando o acesso a Empresas/
+      // troca de tenant silenciosamente, sem erro nenhum pro usuario.
+      ...(user.isSuperAdmin ? { sad: true } : {}),
     });
 
     reply.setCookie('refresh', newJwt, {
@@ -66,6 +70,12 @@ export async function refreshRoute(app: FastifyInstance): Promise<void> {
       maxAge: 30 * 24 * 60 * 60,
     });
 
-    return { accessToken };
+    // Formato igual ao login — o frontend usa isso pra popular o authStore sem precisar
+    // de outra chamada (achado 24/08, pedido do dono: sessao sobreviver a F5).
+    return {
+      accessToken,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, isSuperAdmin: user.isSuperAdmin },
+      tenant: { id: user.tenantId, name: user.tenant.name },
+    };
   });
 }
