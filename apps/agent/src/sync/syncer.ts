@@ -8,7 +8,15 @@ import { logger } from '../logger.js';
 // Loop de sincronizacao incremental.
 // Le pelo catalogo (sync-sales-batch etc), empurra ao SaaS via HTTP POST.
 
-const BATCH_SIZE = 1000;
+// Reduzido de 1000 -> 200 em 24/08 (incidente real): cada upsert paga ~180ms de RTT ate o
+// Supabase (medido); com 5 tabelas sincronizando (sales/saleItems/payments/payables/
+// receivables) e lote de 1000, cada tick levava 30-60s+ — mais que o intervalo do proprio
+// tick (syncIntervalMs=30s), entao os ciclos comecaram a se EMPILHAR (setInterval nao
+// espera o anterior terminar), afogando o pool de conexao do backend e derrubando
+// respostas normais do dashboard pro usuario (500/504 reais vistos por Tarcisio 24/08,
+// 996 requests de /api/agent/sync levando ate 60s). Lote menor = cada tick termina bem
+// dentro da janela de 30s, sem empilhar.
+const BATCH_SIZE = 200;
 
 interface PushResult {
   persisted: number;
@@ -204,36 +212,51 @@ function syncReceivables(cfg: AgentConfig): Promise<number> {
 }
 
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
+  // Trava contra sobreposicao: setInterval dispara um novo tick mesmo se o anterior ainda
+  // estiver rodando. Se um tick demorar mais que syncIntervalMs (rede lenta, tabela grande),
+  // ticks empilhados multiplicam a carga no backend em vez de so atrasar — foi exatamente
+  // isso que derrubou o dashboard do Tarcisio em 24/08. Um tick em andamento faz o proximo
+  // simplesmente pular, nunca rodar em paralelo com o de antes.
+  let running = false;
   return setInterval(async () => {
-    try {
-      const persisted = await syncSales(cfg);
-      if (persisted > 0) logger.info({ table: 'sales', persisted }, 'sync tick');
-    } catch (err) {
-      logger.error({ err }, 'sync tick failed');
+    if (running) {
+      logger.warn('sync tick anterior ainda rodando, pulando este ciclo');
+      return;
     }
+    running = true;
     try {
-      const persisted = await syncSaleItems(cfg);
-      if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
-    } catch (err) {
-      logger.error({ err }, 'sync tick failed (saleItems)');
-    }
-    try {
-      const persisted = await syncPayments(cfg);
-      if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
-    } catch (err) {
-      logger.error({ err }, 'sync tick failed (payments)');
-    }
-    try {
-      const persisted = await syncPayables(cfg);
-      if (persisted > 0) logger.info({ table: 'payables', persisted }, 'sync tick');
-    } catch (err) {
-      logger.error({ err }, 'sync tick failed (payables)');
-    }
-    try {
-      const persisted = await syncReceivables(cfg);
-      if (persisted > 0) logger.info({ table: 'receivables', persisted }, 'sync tick');
-    } catch (err) {
-      logger.error({ err }, 'sync tick failed (receivables)');
+      try {
+        const persisted = await syncSales(cfg);
+        if (persisted > 0) logger.info({ table: 'sales', persisted }, 'sync tick');
+      } catch (err) {
+        logger.error({ err }, 'sync tick failed');
+      }
+      try {
+        const persisted = await syncSaleItems(cfg);
+        if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
+      } catch (err) {
+        logger.error({ err }, 'sync tick failed (saleItems)');
+      }
+      try {
+        const persisted = await syncPayments(cfg);
+        if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
+      } catch (err) {
+        logger.error({ err }, 'sync tick failed (payments)');
+      }
+      try {
+        const persisted = await syncPayables(cfg);
+        if (persisted > 0) logger.info({ table: 'payables', persisted }, 'sync tick');
+      } catch (err) {
+        logger.error({ err }, 'sync tick failed (payables)');
+      }
+      try {
+        const persisted = await syncReceivables(cfg);
+        if (persisted > 0) logger.info({ table: 'receivables', persisted }, 'sync tick');
+      } catch (err) {
+        logger.error({ err }, 'sync tick failed (receivables)');
+      }
+    } finally {
+      running = false;
     }
   }, cfg.syncIntervalMs);
 }
