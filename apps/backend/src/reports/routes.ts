@@ -78,6 +78,54 @@ function defaultPeriod(from?: string, to?: string): { from: Date; to: Date } {
   return { from: fromDate, to: toDate };
 }
 
+const MONTH_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+// Semana do mes por posicao do dia (1-7 -> 0, 8-14 -> 1, ..., 29-31 -> 4) — simples e igual
+// nos dois anos comparados, sem precisar alinhar dia-da-semana (ISO week seria mais preciso
+// mas exigiria janeiro/dezembro cruzando ano — nao vale a complexidade pro caso de uso).
+function weekOfMonth(date: Date): number {
+  return Math.min(4, Math.floor((date.getUTCDate() - 1) / 7));
+}
+
+interface RevenueBucket {
+  label: string;
+  current: number;
+  previous: number;
+}
+
+function buildRevenueBuckets(
+  granularity: 'annual' | 'semiannual' | 'monthly',
+  year: number,
+  currentMonth: number,
+  rows: { saleDate: Date; totalValue: unknown }[],
+): RevenueBucket[] {
+  const val = (v: unknown): number => Number(v ?? 0);
+
+  if (granularity === 'monthly') {
+    const buckets: RevenueBucket[] = Array.from({ length: 5 }, (_, w) => ({ label: `Semana ${w + 1}`, current: 0, previous: 0 }));
+    for (const r of rows) {
+      const d = r.saleDate;
+      if (d.getUTCMonth() !== currentMonth) continue;
+      const w = weekOfMonth(d);
+      if (d.getUTCFullYear() === year) buckets[w]!.current += val(r.totalValue);
+      else if (d.getUTCFullYear() === year - 1) buckets[w]!.previous += val(r.totalValue);
+    }
+    return buckets;
+  }
+
+  const months = granularity === 'annual' ? Array.from({ length: 12 }, (_, i) => i) : Array.from({ length: 6 }, (_, i) => ((currentMonth < 6 ? 0 : 6) + i));
+  const buckets: RevenueBucket[] = months.map((m) => ({ label: MONTH_LABELS[m]!, current: 0, previous: 0 }));
+  const monthIndex = new Map(months.map((m, i) => [m, i]));
+  for (const r of rows) {
+    const d = r.saleDate;
+    const idx = monthIndex.get(d.getUTCMonth());
+    if (idx === undefined) continue;
+    if (d.getUTCFullYear() === year) buckets[idx]!.current += val(r.totalValue);
+    else if (d.getUTCFullYear() === year - 1) buckets[idx]!.previous += val(r.totalValue);
+  }
+  return buckets;
+}
+
 export async function reportRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/reports', { preHandler: [requireAuth, requireCapability('reports.view')] }, async () => {
     return {
@@ -200,6 +248,59 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal }, meta };
+  }));
+
+  // Faturamento bruto sempre vs o mesmo periodo do ANO PASSADO (nao periodo anterior
+  // rolante) — pedido do dono 24/08. 3 granularidades:
+  // - annual: 12 meses do ano corrente vs 12 meses do ano anterior
+  // - semiannual: os 6 meses do semestre corrente (Jan-Jun ou Jul-Dez) vs mesmo semestre ano passado
+  // - monthly: as semanas do mes corrente vs as mesmas semanas do mesmo mes ano passado
+  const revenueComparisonFilters = z.object({
+    granularity: z.enum(['annual', 'semiannual', 'monthly']).default('annual'),
+    storeId: z.string().optional(),
+  });
+
+  app.get('/api/reports/dashboard/revenue-comparison', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('revenue-comparison', async (req) => {
+    const query = revenueComparisonFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const now = new Date();
+    const year = now.getUTCFullYear();
+
+    let rangeFrom: Date;
+    let rangeTo: Date;
+    if (query.granularity === 'annual') {
+      rangeFrom = new Date(Date.UTC(year - 1, 0, 1));
+      rangeTo = new Date(Date.UTC(year, 11, 31, 23, 59, 59));
+    } else if (query.granularity === 'semiannual') {
+      const semesterStartMonth = now.getUTCMonth() < 6 ? 0 : 6;
+      rangeFrom = new Date(Date.UTC(year - 1, semesterStartMonth, 1));
+      rangeTo = new Date(Date.UTC(year, semesterStartMonth + 5, 31, 23, 59, 59));
+    } else {
+      const month = now.getUTCMonth();
+      rangeFrom = new Date(Date.UTC(year - 1, month, 1));
+      rangeTo = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
+    }
+
+    const rows = await prisma.sale.findMany({
+      where: {
+        tenantId: req.user!.tenantId,
+        cancelled: false,
+        saleDate: { gte: rangeFrom, lte: rangeTo },
+        ...(storeId ? { storeId } : {}),
+      },
+      select: { saleDate: true, totalValue: true },
+    });
+
+    const buckets = buildRevenueBuckets(query.granularity, year, now.getUTCMonth(), rows);
+    const currentTotal = buckets.reduce((s, b) => s + b.current, 0);
+    const previousTotal = buckets.reduce((s, b) => s + b.previous, 0);
+    const growthPct = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal) * 100 : 0;
+
+    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
+    return {
+      data: { granularity: query.granularity, buckets, totals: { current: currentTotal, previous: previousTotal, growthPct } },
+      meta,
+    };
   }));
 
   app.get('/api/reports/dre-simplified', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
