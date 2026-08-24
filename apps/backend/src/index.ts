@@ -68,8 +68,18 @@ app.addContentTypeParser(
       (req as unknown as { rawBody: Buffer }).rawBody = body as Buffer;
       done(null, JSON.parse((body as Buffer).toString('utf8')));
     } else {
+      // Corpo vazio com Content-Type: application/json (POST sem body — logout, switch de
+      // tenant, refresh) nao e erro: trata como {} em vez de estourar no JSON.parse('').
+      // Achado 24/08: lib/api.ts do frontend sempre manda esse header, mesmo sem corpo —
+      // toda POST sem body (logout/switchTenant/refresh) vinha derrubando com 500
+      // "Unexpected end of JSON input" antes desse fix.
+      const text = (body as Buffer).toString('utf8').trim();
+      if (text === '') {
+        done(null, {});
+        return;
+      }
       try {
-        done(null, JSON.parse((body as Buffer).toString('utf8')));
+        done(null, JSON.parse(text));
       } catch (err) {
         done(err as Error, undefined);
       }
