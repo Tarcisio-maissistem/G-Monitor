@@ -77,7 +77,8 @@ export function DashboardPage(): JSX.Element {
         <h2 className="text-lg font-semibold text-slate-700 mb-3">Resumo de {mesAtualLabel}</h2>
         {summary.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
         {summary.error && <ErrorBox msg={(summary.error as Error).message} />}
-        {summary.data && (
+        {summary.data && summary.data.data.quantity === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
+        {summary.data && summary.data.data.quantity > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <KpiCard label="Vendas" value={summary.data.data.quantity.toLocaleString('pt-BR')} />
             <KpiCard label="Faturamento" value={formatBRL(summary.data.data.total)} highlight />
@@ -94,7 +95,8 @@ export function DashboardPage(): JSX.Element {
           <h3 className="font-semibold text-slate-700 mb-4">Formas de Pagamento</h3>
           {payments.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
           {payments.error && <ErrorBox msg={(payments.error as Error).message} />}
-          {payments.data && (
+          {payments.data && payments.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
+          {payments.data && payments.data.data.rows.length > 0 && (
             <div className="space-y-2">
               {payments.data.data.rows.slice(0, 6).map((r) => (
                 <div key={r.paymentType} className="flex items-center gap-2">
@@ -119,7 +121,8 @@ export function DashboardPage(): JSX.Element {
           <h3 className="font-semibold text-slate-700 mb-4">Ranking de Vendedores</h3>
           {operators.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
           {operators.error && <ErrorBox msg={(operators.error as Error).message} />}
-          {operators.data && (
+          {operators.data && operators.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
+          {operators.data && operators.data.data.rows.length > 0 && (
             <div className="space-y-2">
               {operators.data.data.rows.slice(0, showAllOperators ? 100 : 10).map((r, i) => (
                 <div key={r.operator} className="flex items-center gap-2">
@@ -147,7 +150,8 @@ export function DashboardPage(): JSX.Element {
         <h3 className="font-semibold text-slate-700 mb-4">Curva ABC — Top 20 Produtos</h3>
         {abc.isLoading && <div className="text-slate-400 text-sm">Carregando...</div>}
         {abc.error && <ErrorBox msg={(abc.error as Error).message} />}
-        {abc.data && (
+        {abc.data && abc.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
+        {abc.data && abc.data.data.rows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -185,6 +189,17 @@ function KpiCard({ label, value, highlight }: { label: string; value: string; hi
     <div className="bg-white rounded-xl shadow-sm border p-4">
       <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">{label}</div>
       <div className={`text-2xl font-bold ${highlight ? 'text-blue-700' : 'text-slate-800'}`}>{value}</div>
+    </div>
+  );
+}
+
+// Mostra quando a query voltou vazia (nao e erro — so nao ha venda no periodo escolhido).
+// Achado testando a UI de verdade 24/08: sem isso, o dashboard so mostrava "R$ 0,00" em
+// tudo, sem dar pra saber se estava quebrado ou se so nao tinha venda no mes atual.
+function EmptyPeriod({ mesAtualLabel }: { mesAtualLabel: string }): JSX.Element {
+  return (
+    <div className="text-sm text-slate-400 py-4 text-center">
+      Nenhuma venda registrada em {mesAtualLabel} no GDOOR.
     </div>
   );
 }
