@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { copyToClipboard } from '../lib/clipboard';
 import { useToast } from '../components/Toast';
 import { Spinner } from '../components/Spinner';
+import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
 
 interface SalesSummary {
   data: {
@@ -110,6 +111,8 @@ export function DashboardPage(): JSX.Element {
           </div>
         )}
       </section>
+
+      <RevenueYoYChart />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Formas de pagamento */}
