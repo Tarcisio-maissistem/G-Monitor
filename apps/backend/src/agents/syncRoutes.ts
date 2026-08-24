@@ -45,7 +45,12 @@ async function mapWithConcurrency<T, R>(
 // Deixa uma boa folga do connection_limit do DATABASE_URL pro resto do app (login, dashboard,
 // relatorios) nao passar fome enquanto o sync de um backlog grande roda em segundo plano —
 // achado ao vivo no piloto 22/08 (login e telas ficando lentos com concorrencia = quase o limite).
-const SYNC_CONCURRENCY = 6;
+// Reduzido de 6 -> 2 em 24/08 (incidente real): mesmo com lote de 200 (ver syncer.ts), o
+// backend chegou a devolver P1001 "Can't reach database server" pro dashboard do Tarcisio
+// durante o backlog de saleItems/payments — nao era so fila lenta, o POOLER do Supabase
+// ficou sem slot de conexao disponivel com 6 upserts simultaneos + as leituras normais do
+// dashboard competindo pelo mesmo connection_limit=15.
+const SYNC_CONCURRENCY = 2;
 
 async function authenticateAgent(
   authHeader: string | undefined,
