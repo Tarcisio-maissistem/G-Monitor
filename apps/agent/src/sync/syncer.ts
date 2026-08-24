@@ -69,6 +69,72 @@ async function syncSales(cfg: AgentConfig): Promise<number> {
   return persisted;
 }
 
+async function syncSaleItems(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+
+  const entry = resolveReport('sync-sale-items-batch')!;
+  const checkpoint = getCheckpoint('saleItems') ?? '0';
+  const afterId = Number(checkpoint);
+  const rows = await pool.query<{
+    source_id: number;
+    sale_source_id: number;
+    product_code: string | null;
+    description: string | null;
+    quantity: number;
+    unit_value: number;
+    total_value: number;
+  }>(entry.sql, [BATCH_SIZE, afterId]);
+  if (rows.length === 0) return 0;
+
+  const camelRows = rows.map((r) => ({
+    sourceId: String(r.source_id),
+    saleSourceId: String(r.sale_source_id),
+    productCode: r['product_code'] ? String(r['product_code']) : null,
+    description: r['description'] ? String(r['description']) : null,
+    quantity: Number(r.quantity),
+    unitValue: Number(r.unit_value),
+    totalValue: Number(r.total_value),
+  }));
+
+  const lastId = String(rows[rows.length - 1]!.source_id);
+  const { persisted } = await postBatch(cfg, 'saleItems', camelRows, lastId);
+  setCheckpoint('saleItems', lastId);
+  return persisted;
+}
+
+async function syncPayments(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+
+  const entry = resolveReport('sync-payments-batch')!;
+  const checkpoint = getCheckpoint('payments') ?? '0';
+  const afterId = Number(checkpoint);
+  const rows = await pool.query<{
+    source_id: number;
+    sale_source_id: number | null;
+    payment_date: string;
+    payment_type: string | null;
+    especie: string | null;
+    total_value: number;
+  }>(entry.sql, [BATCH_SIZE, afterId]);
+  if (rows.length === 0) return 0;
+
+  const camelRows = rows.map((r) => ({
+    sourceId: String(r.source_id),
+    saleSourceId: r['sale_source_id'] != null ? String(r['sale_source_id']) : null,
+    paymentDate: new Date(r.payment_date).toISOString(),
+    paymentType: r['payment_type'] ? String(r['payment_type']) : 'OUTROS',
+    especie: r['especie'] ? String(r['especie']) : null,
+    value: Number(r.total_value),
+  }));
+
+  const lastId = String(rows[rows.length - 1]!.source_id);
+  const { persisted } = await postBatch(cfg, 'payments', camelRows, lastId);
+  setCheckpoint('payments', lastId);
+  return persisted;
+}
+
 // Sincroniza uma tabela financeira (payables/receivables) usando o mapeamento de campos passado.
 // Escolhe o catalogo certo pela variante de schema detectada (ver design.md D11):
 // 'pagar_receber' (PAGAR/RECEBER, CONFIRMADA em producao 22/08) ou 'contas_pagar_receber'
@@ -144,6 +210,18 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
       if (persisted > 0) logger.info({ table: 'sales', persisted }, 'sync tick');
     } catch (err) {
       logger.error({ err }, 'sync tick failed');
+    }
+    try {
+      const persisted = await syncSaleItems(cfg);
+      if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
+    } catch (err) {
+      logger.error({ err }, 'sync tick failed (saleItems)');
+    }
+    try {
+      const persisted = await syncPayments(cfg);
+      if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
+    } catch (err) {
+      logger.error({ err }, 'sync tick failed (payments)');
     }
     try {
       const persisted = await syncPayables(cfg);
