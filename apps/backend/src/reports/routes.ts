@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
 import { redis } from '../db/redis.js';
@@ -281,17 +282,26 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       rangeTo = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
     }
 
-    const rows = await prisma.sale.findMany({
-      where: {
-        tenantId: req.user!.tenantId,
-        cancelled: false,
-        saleDate: { gte: rangeFrom, lte: rangeTo },
-        ...(storeId ? { storeId } : {}),
-      },
-      select: { saleDate: true, totalValue: true },
-    });
+    // Agrega no Postgres (GROUP BY mes ou dia), nunca traz linha-a-linha pro Node — achado
+    // 24/08: um SELECT sem agregacao pra 2 anos inteiros de vendas reais estourou o timeout
+    // de 60s do Cloudflare (504). Granularidade do bucket: dia pra "monthly" (poucas semanas
+    // pra montar em JS), mes pros outros dois (no maximo 24 linhas voltam do banco).
+    const truncUnit = query.granularity === 'monthly' ? 'day' : 'month';
+    const rows = await prisma.$queryRaw<{ bucket: Date; total: unknown }[]>(
+      storeId
+        ? Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
+            FROM sales
+            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND "storeId" = ${storeId}
+              AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
+            GROUP BY 1`
+        : Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
+            FROM sales
+            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false
+              AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
+            GROUP BY 1`,
+    );
 
-    const buckets = buildRevenueBuckets(query.granularity, year, now.getUTCMonth(), rows);
+    const buckets = buildRevenueBuckets(query.granularity, year, now.getUTCMonth(), rows.map((r) => ({ saleDate: r.bucket, totalValue: r.total })));
     const currentTotal = buckets.reduce((s, b) => s + b.current, 0);
     const previousTotal = buckets.reduce((s, b) => s + b.previous, 0);
     const growthPct = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal) * 100 : 0;
