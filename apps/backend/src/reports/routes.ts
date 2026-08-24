@@ -581,24 +581,25 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
   stalenessSeconds: number | null;
   agentsOffline: string[];
 }> {
-  const states = await prisma.syncState.findMany({
-    where: { tenantId, ...(storeId ? { storeId } : {}) },
-    orderBy: { lastSyncedAt: 'asc' },
-    take: 1,
+  // "Frescor" usa o heartbeat do agente (Agent.lastSeenAt), nao SyncState.lastSyncedAt.
+  // SyncState so atualiza quando ha linha NOVA pra persistir — uma tabela que ja pegou
+  // todo o backlog (ex: payables sem lancamento novo desde ontem) fica com lastSyncedAt
+  // congelado pra sempre, mesmo com o agente vivo e verificando a cada 30s. Usar o
+  // heartbeat reflete "o agente esta rodando e checando", que e o que "defasagem" deveria
+  // significar — nao "achamos dado novo recentemente" (achado testando a UI de verdade
+  // 24/08: alerta de "939 min de defasagem" com o agente sincronizando ha segundos).
+  const agents = await prisma.agent.findMany({
+    where: { tenantId, revokedAt: null, ...(storeId ? { storeId } : {}) },
+    select: { storeId: true, lastSeenAt: true },
   });
-  const oldest = states[0]?.lastSyncedAt ?? null;
-  const offline = await prisma.agent.findMany({
-    where: {
-      tenantId,
-      revokedAt: null,
-      OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } }],
-      ...(storeId ? { storeId } : {}),
-    },
-    select: { storeId: true },
-  });
+  const mostRecentSeen = agents.reduce<Date | null>(
+    (acc, a) => (a.lastSeenAt && (!acc || a.lastSeenAt > acc) ? a.lastSeenAt : acc),
+    null,
+  );
+  const offline = agents.filter((a) => !a.lastSeenAt || a.lastSeenAt < new Date(Date.now() - 5 * 60 * 1000));
   return {
-    lastSyncedAt: oldest?.toISOString() ?? null,
-    stalenessSeconds: oldest ? Math.round((Date.now() - oldest.getTime()) / 1000) : null,
+    lastSyncedAt: mostRecentSeen?.toISOString() ?? null,
+    stalenessSeconds: mostRecentSeen ? Math.round((Date.now() - mostRecentSeen.getTime()) / 1000) : null,
     agentsOffline: offline.map((a) => a.storeId),
   };
 }
