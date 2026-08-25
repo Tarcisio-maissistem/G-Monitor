@@ -8,10 +8,12 @@ import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 
 // Cache curto (cache-aside) pros relatorios: cada request bate no Supabase (~180ms de RTT
-// so na ida-e-volta, sa-east-1) e a maioria dos handlers faz 2-4 chamadas Prisma sequenciais
-// — por isso ~1.3s por relatorio mesmo sem query pesada nem indice faltando (medido 23/08).
-// TTL curto (45s) porque o agente sincroniza a cada 30s; nao precisa de precisao ao segundo.
-const REPORT_CACHE_TTL_SECONDS = 45;
+// so na ida-e-volta, sa-east-1). Achado 24/08: quase todo handler fazia a query principal
+// + getFreshnessMeta em 2 awaits SEQUENCIAIS (2x RTT por report) — agora e Promise.all em
+// TODOS os handlers (1x RTT). TTL 90s (era 45s) pra casar com o syncIntervalMs padrao novo
+// do agente (tambem 90s, ver installer) — nao precisa de cache mais curto que o proprio
+// intervalo de sincronizacao.
+const REPORT_CACHE_TTL_SECONDS = 90;
 
 // Retry curto pra P1001 ("Can't reach database server") — visto ao vivo 24/08 como blip
 // raro e transitorio (~1 em 120 chamadas, sem relacao com carga do proprio app), tipico de
@@ -157,7 +159,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       ...(storeId ? { storeId } : {}),
     };
 
-    const [agg, distinctDays, distinctCustomers] = await Promise.all([
+    const [agg, distinctDays, distinctCustomers, meta] = await Promise.all([
       prisma.sale.aggregate({
         where,
         _sum: { totalValue: true },
@@ -166,9 +168,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       }),
       prisma.sale.findMany({ where, distinct: ['saleDate'], select: { saleDate: true } }),
       prisma.sale.findMany({ where, distinct: ['customerSourceId'], select: { customerSourceId: true } }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
-
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
 
     return {
       data: {
@@ -188,17 +189,20 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const storeId = resolveStoreScope(req, query.storeId);
     if (!storeId && req.user!.role === 'operador') throw Errors.forbidden();
 
-    const items = await prisma.saleItem.groupBy({
-      by: ['productCode', 'description'],
-      where: {
-        tenantId: req.user!.tenantId,
-        sale: { saleDate: { gte: from, lte: to }, cancelled: false },
-        ...(storeId ? { storeId } : {}),
-      },
-      _sum: { totalValue: true, quantity: true },
-      orderBy: { _sum: { totalValue: 'desc' } },
-      take: 500,
-    });
+    const [items, meta] = await Promise.all([
+      prisma.saleItem.groupBy({
+        by: ['productCode', 'description'],
+        where: {
+          tenantId: req.user!.tenantId,
+          sale: { saleDate: { gte: from, lte: to }, cancelled: false },
+          ...(storeId ? { storeId } : {}),
+        },
+        _sum: { totalValue: true, quantity: true },
+        orderBy: { _sum: { totalValue: 'desc' } },
+        take: 500,
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const grand = items.reduce((s, i) => s + Number(i._sum.totalValue ?? 0), 0);
     let acc = 0;
@@ -218,7 +222,6 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal: grand }, meta };
   }));
 
@@ -227,17 +230,20 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
 
-    const groups = await prisma.payment.groupBy({
-      by: ['paymentType'],
-      where: {
-        tenantId: req.user!.tenantId,
-        paymentDate: { gte: from, lte: to },
-        ...(storeId ? { storeId } : {}),
-      },
-      _sum: { value: true },
-      _count: true,
-      orderBy: { _sum: { value: 'desc' } },
-    });
+    const [groups, meta] = await Promise.all([
+      prisma.payment.groupBy({
+        by: ['paymentType'],
+        where: {
+          tenantId: req.user!.tenantId,
+          paymentDate: { gte: from, lte: to },
+          ...(storeId ? { storeId } : {}),
+        },
+        _sum: { value: true },
+        _count: true,
+        orderBy: { _sum: { value: 'desc' } },
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const grandTotal = groups.reduce((s, g) => s + Number(g._sum.value ?? 0), 0);
     const rows = groups.map((g) => ({
@@ -247,8 +253,212 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       pct: grandTotal > 0 ? Number(g._sum.value ?? 0) / grandTotal : 0,
     }));
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal }, meta };
+  }));
+
+  // Mesmo agregado do sales-by-payment, so que no formato que PagamentosPage.tsx espera
+  // (value/percent em vez de total/pct, total no nivel raiz em vez de grandTotal aninhado).
+  app.get('/api/reports/payments-summary', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('payments-summary', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const [groups, meta] = await Promise.all([
+      prisma.payment.groupBy({
+        by: ['paymentType'],
+        where: { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+        _sum: { value: true },
+        _count: true,
+        orderBy: { _sum: { value: 'desc' } },
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    const total = groups.reduce((s, g) => s + Number(g._sum.value ?? 0), 0);
+    const data = groups.map((g) => ({
+      paymentType: g.paymentType,
+      count: g._count,
+      value: Number(g._sum.value ?? 0),
+      percent: total > 0 ? Number(g._sum.value ?? 0) / total : 0,
+    }));
+
+    return { data, total, meta };
+  }));
+
+  // Listagem paginada de vendas — pedido do dono 24/08: pagina de Vendas estava 404 (o
+  // frontend ja tinha paginacao pronta, so faltava esse endpoint).
+  const listPageFilters = z.object({
+    from: z.string().date().optional(),
+    to: z.string().date().optional(),
+    storeId: z.string().optional(),
+    status: z.enum(['ok', 'cancelada']).optional(),
+    modelo: z.string().optional(),
+    search: z.string().optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(250).default(50),
+  });
+
+  app.get('/api/reports/sales', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales', async (req) => {
+    const query = listPageFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const where = {
+      tenantId: req.user!.tenantId,
+      saleDate: { gte: from, lte: to },
+      ...(storeId ? { storeId } : {}),
+      ...(query.status ? { cancelled: query.status === 'cancelada' } : {}),
+      ...(query.modelo ? { modelo: query.modelo } : {}),
+      ...(query.search ? { sourceId: { contains: query.search } } : {}),
+    };
+
+    const [rows, total, activeAgg, cancelledCount, meta] = await Promise.all([
+      prisma.sale.findMany({
+        where,
+        orderBy: { saleDate: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.sale.count({ where }),
+      prisma.sale.aggregate({
+        where: { ...where, cancelled: false },
+        _sum: { totalValue: true },
+        _count: true,
+        _avg: { totalValue: true },
+      }),
+      prisma.sale.count({ where: { ...where, cancelled: true } }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        sourceId: r.sourceId,
+        saleDate: r.saleDate,
+        modelo: r.modelo,
+        operatorName: r.operatorName,
+        caixa: r.caixa,
+        natureza: r.natureza,
+        totalValue: Number(r.totalValue),
+        cancelled: r.cancelled,
+        customerSourceId: r.customerSourceId,
+      })),
+      pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
+      summary: {
+        total: activeAgg._count + cancelledCount,
+        cancelled: cancelledCount,
+        revenue: Number(activeAgg._sum.totalValue ?? 0),
+        ticket: Number(activeAgg._avg.totalValue ?? 0),
+      },
+      meta,
+    };
+  }));
+
+  // Catalogo de produtos paginado — mesma causa do /sales (endpoint nunca existiu).
+  const catalogPageFilters = z.object({
+    storeId: z.string().optional(),
+    search: z.string().optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(250).default(50),
+  });
+
+  app.get('/api/reports/products', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('products', async (req) => {
+    const query = catalogPageFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const where = {
+      tenantId: req.user!.tenantId,
+      ...(storeId ? { storeId } : {}),
+      ...(query.search
+        ? { OR: [{ sourceCode: { contains: query.search } }, { description: { contains: query.search, mode: 'insensitive' as const } }] }
+        : {}),
+    };
+
+    const [rows, total, meta] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        orderBy: { description: 'asc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.product.count({ where }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        sourceCode: r.sourceCode,
+        description: r.description,
+        unit: r.unit,
+        stock: r.stock ? Number(r.stock) : null,
+        costPrice: r.costPrice ? Number(r.costPrice) : null,
+        salePrice: r.salePrice ? Number(r.salePrice) : null,
+      })),
+      pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
+      meta,
+    };
+  }));
+
+  // Clientes paginados, com total de compras/valor gasto agregado so pra pagina atual (nao
+  // pro cadastro inteiro) — mesma causa do /sales.
+  app.get('/api/reports/customers', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('customers', async (req) => {
+    const query = catalogPageFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const where = {
+      tenantId: req.user!.tenantId,
+      ...(storeId ? { storeId } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { name: { contains: query.search, mode: 'insensitive' as const } },
+              { document: { contains: query.search } },
+              { phone: { contains: query.search } },
+            ],
+          }
+        : {}),
+    };
+
+    const [rows, total, meta] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.customer.count({ where }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    // Agregado de compras so das linhas desta pagina (nao do cadastro inteiro).
+    const sourceIds = rows.map((r) => r.sourceId);
+    const salesAgg = sourceIds.length
+      ? await prisma.sale.groupBy({
+          by: ['customerSourceId'],
+          where: { tenantId: req.user!.tenantId, cancelled: false, customerSourceId: { in: sourceIds } },
+          _count: true,
+          _sum: { totalValue: true },
+        })
+      : [];
+    const salesBySourceId = new Map(salesAgg.map((s) => [s.customerSourceId, s]));
+
+    return {
+      data: rows.map((r) => {
+        const agg = salesBySourceId.get(r.sourceId);
+        return {
+          id: r.id,
+          sourceId: r.sourceId,
+          name: r.name,
+          document: r.document,
+          phone: r.phone,
+          totalCompras: agg?._count ?? 0,
+          valorTotal: Number(agg?._sum.totalValue ?? 0),
+        };
+      }),
+      pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
+      meta,
+    };
   }));
 
   // Faturamento bruto sempre vs o mesmo periodo do ANO PASSADO (nao periodo anterior
@@ -287,26 +497,28 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     // de 60s do Cloudflare (504). Granularidade do bucket: dia pra "monthly" (poucas semanas
     // pra montar em JS), mes pros outros dois (no maximo 24 linhas voltam do banco).
     const truncUnit = query.granularity === 'monthly' ? 'day' : 'month';
-    const rows = await prisma.$queryRaw<{ bucket: Date; total: unknown }[]>(
-      storeId
-        ? Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
-            FROM sales
-            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND "storeId" = ${storeId}
-              AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
-            GROUP BY 1`
-        : Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
-            FROM sales
-            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false
-              AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
-            GROUP BY 1`,
-    );
+    const [rows, meta] = await Promise.all([
+      prisma.$queryRaw<{ bucket: Date; total: unknown }[]>(
+        storeId
+          ? Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
+              FROM sales
+              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND "storeId" = ${storeId}
+                AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
+              GROUP BY 1`
+          : Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
+              FROM sales
+              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false
+                AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
+              GROUP BY 1`,
+      ),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const buckets = buildRevenueBuckets(query.granularity, year, now.getUTCMonth(), rows.map((r) => ({ saleDate: r.bucket, totalValue: r.total })));
     const currentTotal = buckets.reduce((s, b) => s + b.current, 0);
     const previousTotal = buckets.reduce((s, b) => s + b.previous, 0);
     const growthPct = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal) * 100 : 0;
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return {
       data: { granularity: query.granularity, buckets, totals: { current: currentTotal, previous: previousTotal, growthPct } },
       meta,
@@ -321,7 +533,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const dateWhere = { saleDate: { gte: from, lte: to } };
     const baseWhere = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) };
 
-    const [active, cancelled, payments] = await Promise.all([
+    const [active, cancelled, payments, meta] = await Promise.all([
       prisma.sale.aggregate({
         where: { ...baseWhere, ...dateWhere, cancelled: false },
         _sum: { totalValue: true },
@@ -339,12 +551,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         _count: true,
         orderBy: { _sum: { value: 'desc' } },
       }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
 
     const gross = Number(active._sum.totalValue ?? 0);
     const cancellations = Number(cancelled._sum.totalValue ?? 0);
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return {
       data: {
         grossRevenue: gross,
@@ -366,18 +578,20 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const query = baseFilters.parse(req.query);
     const storeId = resolveStoreScope(req, query.storeId);
 
-    const rows = await prisma.product.findMany({
-      where: {
-        tenantId: req.user!.tenantId,
-        ...(storeId ? { storeId } : {}),
-        OR: [{ stock: { lte: 0 } }, { stock: null }],
-      },
-      select: { sourceCode: true, description: true, unit: true, stock: true, salePrice: true },
-      orderBy: { description: 'asc' },
-      take: 500,
-    });
+    const [rows, meta] = await Promise.all([
+      prisma.product.findMany({
+        where: {
+          tenantId: req.user!.tenantId,
+          ...(storeId ? { storeId } : {}),
+          OR: [{ stock: { lte: 0 } }, { stock: null }],
+        },
+        select: { sourceCode: true, description: true, unit: true, stock: true, salePrice: true },
+        orderBy: { description: 'asc' },
+        take: 500,
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return {
       data: {
         rows: rows.map((r) => ({ ...r, stock: r.stock ? Number(r.stock) : null, salePrice: r.salePrice ? Number(r.salePrice) : null })),
@@ -392,18 +606,21 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const storeId = resolveStoreScope(req, query.storeId);
 
     // Vendas sem nenhum pagamento associado = possiveis creditos nao liquidados
-    const unpaid = await prisma.sale.findMany({
-      where: {
-        tenantId: req.user!.tenantId,
-        ...(storeId ? { storeId } : {}),
-        cancelled: false,
-        saleDate: { gte: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) },
-        payments: { none: {} },
-      },
-      select: { sourceId: true, saleDate: true, totalValue: true, operatorName: true, customerSourceId: true },
-      orderBy: { saleDate: 'asc' },
-      take: 500,
-    });
+    const [unpaid, meta] = await Promise.all([
+      prisma.sale.findMany({
+        where: {
+          tenantId: req.user!.tenantId,
+          ...(storeId ? { storeId } : {}),
+          cancelled: false,
+          saleDate: { gte: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) },
+          payments: { none: {} },
+        },
+        select: { sourceId: true, saleDate: true, totalValue: true, operatorName: true, customerSourceId: true },
+        orderBy: { saleDate: 'asc' },
+        take: 500,
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const now = Date.now();
     const buckets: Record<string, { count: number; total: number }> = {
@@ -421,7 +638,6 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const grandTotal = unpaid.reduce((sum, s) => sum + Number(s.totalValue), 0);
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return {
       data: {
         aging: Object.entries(buckets).map(([range, v]) => ({ range, ...v })),
@@ -438,19 +654,22 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
 
-    const groups = await prisma.sale.groupBy({
-      by: ['operatorName'],
-      where: {
-        tenantId: req.user!.tenantId,
-        cancelled: false,
-        saleDate: { gte: from, lte: to },
-        ...(storeId ? { storeId } : {}),
-      },
-      _sum: { totalValue: true },
-      _count: true,
-      orderBy: { _sum: { totalValue: 'desc' } },
-      take: 100,
-    });
+    const [groups, meta] = await Promise.all([
+      prisma.sale.groupBy({
+        by: ['operatorName'],
+        where: {
+          tenantId: req.user!.tenantId,
+          cancelled: false,
+          saleDate: { gte: from, lte: to },
+          ...(storeId ? { storeId } : {}),
+        },
+        _sum: { totalValue: true },
+        _count: true,
+        orderBy: { _sum: { totalValue: 'desc' } },
+        take: 100,
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const grandTotal = groups.reduce((s, g) => s + Number(g._sum.totalValue ?? 0), 0);
     const rows = groups.map((g) => ({
@@ -460,7 +679,6 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       pct: grandTotal > 0 ? Number(g._sum.totalValue ?? 0) / grandTotal : 0,
     }));
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, grandTotal }, meta };
   }));
 
@@ -469,16 +687,19 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const storeId = resolveStoreScope(req, query.storeId);
 
     // Mes da primeira compra por cliente (cohort de aquisicao)
-    const firstPurchases = await prisma.sale.groupBy({
-      by: ['customerSourceId'],
-      where: {
-        tenantId: req.user!.tenantId,
-        cancelled: false,
-        customerSourceId: { not: null },
-        ...(storeId ? { storeId } : {}),
-      },
-      _min: { saleDate: true },
-    });
+    const [firstPurchases, meta] = await Promise.all([
+      prisma.sale.groupBy({
+        by: ['customerSourceId'],
+        where: {
+          tenantId: req.user!.tenantId,
+          cancelled: false,
+          customerSourceId: { not: null },
+          ...(storeId ? { storeId } : {}),
+        },
+        _min: { saleDate: true },
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const cohortMap = new Map<string, number>();
     for (const s of firstPurchases) {
@@ -492,7 +713,6 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, newCustomers]) => ({ month, newCustomers }));
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { rows, totalCustomers: firstPurchases.length }, meta };
   });
 
@@ -530,10 +750,13 @@ function registerFinanceRoutes(app: FastifyInstance): void {
     const storeId = resolveStoreScope(req, query.storeId);
     const { from, to } = monthBounds(query.month);
 
-    const rows = await prisma.payable.findMany({
-      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
-      select: { dueDate: true, value: true, paidValue: true, paidDate: true },
-    });
+    const [rows, meta] = await Promise.all([
+      prisma.payable.findMany({
+        where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+        select: { dueDate: true, value: true, paidValue: true, paidDate: true },
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
@@ -554,7 +777,6 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       { total: 0, paid: 0, pending: 0, overdue: 0 },
     );
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { days: daysArr, monthSummary }, meta };
   }));
 
@@ -563,10 +785,13 @@ function registerFinanceRoutes(app: FastifyInstance): void {
     const storeId = resolveStoreScope(req, query.storeId);
     const { from, to } = monthBounds(query.month);
 
-    const rows = await prisma.receivable.findMany({
-      where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
-      select: { dueDate: true, value: true, receivedValue: true, receivedDate: true },
-    });
+    const [rows, meta] = await Promise.all([
+      prisma.receivable.findMany({
+        where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } },
+        select: { dueDate: true, value: true, receivedValue: true, receivedDate: true },
+      }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
@@ -587,7 +812,6 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       { total: 0, paid: 0, pending: 0, overdue: 0 },
     );
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data: { days: daysArr, monthSummary }, meta };
   }));
 
@@ -606,10 +830,11 @@ function registerFinanceRoutes(app: FastifyInstance): void {
 
     // Resumo (summary) sempre sobre o total real (nao so as 500 exibidas), senao pending/
     // overdue somam errado quando a janela de datas tem mais de 500 lancamentos.
-    const [rows, allForSummary, totalCount] = await Promise.all([
+    const [rows, allForSummary, totalCount, meta] = await Promise.all([
       prisma.payable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
       prisma.payable.findMany({ where, select: { value: true, paidValue: true, paidDate: true, dueDate: true } }),
       prisma.payable.count({ where }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
 
     const today = new Date();
@@ -647,7 +872,6 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       { total: 0, pending: 0, overdue: 0 },
     );
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
   }));
 
@@ -658,10 +882,11 @@ function registerFinanceRoutes(app: FastifyInstance): void {
     const where = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } };
 
     // Mesma logica do payables: summary sobre o total real, nao so as 500 exibidas.
-    const [rows, allForSummary, totalCount] = await Promise.all([
+    const [rows, allForSummary, totalCount, meta] = await Promise.all([
       prisma.receivable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
       prisma.receivable.findMany({ where, select: { value: true, receivedValue: true, receivedDate: true, dueDate: true } }),
       prisma.receivable.count({ where }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
 
     const today = new Date();
@@ -699,7 +924,6 @@ function registerFinanceRoutes(app: FastifyInstance): void {
       { total: 0, pending: 0, overdue: 0 },
     );
 
-    const meta = await getFreshnessMeta(req.user!.tenantId, storeId);
     return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
   }));
 }
