@@ -20,6 +20,11 @@ model Tenant {
   plan               Plan     @default(starter)
   subscriptionStatus SubStatus @default(trialing)
   stripeCustomerId   String?  @unique
+  // true = autocadastro pelo login aguardando aprovacao do super-admin. Agente ate se
+  // registra (token valido), mas WS/sync sao bloqueados enquanto pendente (ver
+  // authenticateAgent em syncRoutes.ts e registerAgentWs). Tenants criados por signup
+  // tradicional ou pelo admin (Empresas) nascem false (ja aprovados).
+  pendingApproval    Boolean  @default(false)
   meta               Json     @default("{}")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

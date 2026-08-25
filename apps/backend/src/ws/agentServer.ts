@@ -34,6 +34,13 @@ export async function registerAgentWs(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    // Autocadastro pelo login (24/08): agente ja tem token valido, mas WS so conecta de
+    // verdade depois que o super-admin aprovar a empresa (POST /api/admin/tenants/:id/approve).
+    if (agent.tenant.pendingApproval) {
+      ws.close(WS_CLOSE_CODES.PENDING_APPROVAL, 'pending_approval');
+      return;
+    }
+
     const session = await prisma.agentSession.create({
       data: { agentId: agent.id, ip: req.ip, protocolVersion: PROTOCOL_VERSION },
     });

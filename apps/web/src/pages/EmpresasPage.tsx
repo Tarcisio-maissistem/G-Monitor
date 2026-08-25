@@ -15,6 +15,7 @@ interface Tenant {
   phone: string | null;
   plan: string;
   subscriptionStatus: string;
+  pendingApproval: boolean;
   createdAt: string;
   _count: { stores: number; users: number; agents: number };
 }
@@ -46,6 +47,16 @@ export function EmpresasPage(): JSX.Element {
       toast.push({ type: 'success', message: `Empresa "${data.tenant.name}" criada.` });
     },
     onError: (e: Error) => toast.push({ type: 'error', message: `Erro ao criar: ${e.message}` }),
+  });
+
+  const approve = useMutation({
+    mutationFn: (id: string) => api<{ ok: boolean }>(`/api/admin/tenants/${id}/approve`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'tenants'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      toast.push({ type: 'success', message: 'Empresa aprovada — o agente já pode sincronizar.' });
+    },
+    onError: (e: Error) => toast.push({ type: 'error', message: `Erro ao aprovar: ${e.message}` }),
   });
 
   const remove = useMutation({
@@ -130,6 +141,9 @@ export function EmpresasPage(): JSX.Element {
                 <td className="px-4 py-3 capitalize">{t.plan}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={t.subscriptionStatus} />
+                  {t.pendingApproval && (
+                    <span className="ml-1.5 px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">Pendente aprovação</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-center">
                   {t._count.agents > 0 ? (
@@ -139,6 +153,16 @@ export function EmpresasPage(): JSX.Element {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
+                  {t.pendingApproval && (
+                    <button
+                      onClick={() => approve.mutate(t.id)}
+                      disabled={approve.isPending}
+                      className="text-emerald-700 hover:underline text-xs disabled:opacity-50 inline-flex items-center gap-1 font-medium"
+                    >
+                      {approve.isPending && approve.variables === t.id && <Spinner className="h-3 w-3" />}
+                      Aprovar
+                    </button>
+                  )}
                   <button
                     onClick={() => navigate(`/empresas/${t.id}/usuarios`)}
                     className="text-blue-600 hover:underline text-xs"

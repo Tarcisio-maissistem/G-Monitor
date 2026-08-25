@@ -59,8 +59,12 @@ async function authenticateAgent(
   const token = authHeader.substring(7);
   const agent = await prisma.agent.findFirst({
     where: { tokenHash: hashToken(token), revokedAt: null },
+    include: { tenant: true },
   });
   if (!agent) throw Errors.unauthorized('Token de agente invalido');
+  // Autocadastro pelo login (24/08): empresa pendente de aprovacao nao sincroniza —
+  // o agente fica tentando de novo sozinho ate o super-admin aprovar.
+  if (agent.tenant.pendingApproval) throw Errors.forbidden('Empresa aguardando aprovacao do administrador');
   return { tenantId: agent.tenantId, storeId: agent.storeId, agentId: agent.id };
 }
 

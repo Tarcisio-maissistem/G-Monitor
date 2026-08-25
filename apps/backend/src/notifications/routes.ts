@@ -12,8 +12,14 @@ const ruleUpdateSchema = z.object({
 
 export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/notifications', { preHandler: [requireAuth] }, async (req) => {
+    // Super-admin ve tambem os alertas de novo autocadastro (signup_pending) de QUALQUER
+    // empresa, nao so da que ele esta olhando no momento no seletor — senao um cadastro
+    // novo nunca aparece se ele estiver com outro tenant selecionado. Achado 24/08.
     const list = await prisma.notification.findMany({
-      where: { tenantId: req.user!.tenantId, userId: req.user!.id },
+      where: req.user!.isSuperAdmin
+        ? { OR: [{ tenantId: req.user!.tenantId, userId: req.user!.id }, { type: 'signup_pending' }] }
+        : { tenantId: req.user!.tenantId, userId: req.user!.id },
+      include: { tenant: { select: { name: true, pendingApproval: true } } },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -24,7 +30,9 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/notifications/:id/read', { preHandler: [requireAuth] }, async (req) => {
     const { id } = req.params as { id: string };
     await prisma.notification.updateMany({
-      where: { id, userId: req.user!.id, tenantId: req.user!.tenantId },
+      where: req.user!.isSuperAdmin
+        ? { id, OR: [{ tenantId: req.user!.tenantId, userId: req.user!.id }, { type: 'signup_pending' }] }
+        : { id, userId: req.user!.id, tenantId: req.user!.tenantId },
       data: { readAt: new Date() },
     });
     return { ok: true };

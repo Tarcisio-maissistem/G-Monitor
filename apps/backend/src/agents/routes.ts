@@ -13,7 +13,40 @@ const createAgentSchema = z.object({
   channel: z.enum(['stable', 'beta', 'canary']).default('stable'),
 });
 
+const registerByCnpjSchema = z.object({ cnpj: z.string().min(11) });
+
 export async function agentRoutes(app: FastifyInstance): Promise<void> {
+  // PUBLICO (sem login) — o instalador generico pede o CNPJ na hora de instalar (pedido
+  // do dono 24/08) em vez de precisar de um token gerado na mao pra cada loja. Sempre
+  // emite um token (o agente ja fica configurado), mas se a empresa ainda estiver
+  // pendingApproval o WS/sync recusam ate o super-admin aprovar (ver syncRoutes.ts e
+  // ws/agentServer.ts) — o agente so fica esperando, sem quebrar nem vazar dado nenhum.
+  app.post('/api/agents/register-by-cnpj', async (req, reply) => {
+    const body = registerByCnpjSchema.parse(req.body);
+    const tenant = await prisma.tenant.findFirst({ where: { cnpj: body.cnpj, deletedAt: null } });
+    if (!tenant) throw Errors.notFound('CNPJ nao encontrado. Cadastre a empresa pelo login primeiro.');
+
+    let store = await prisma.store.findFirst({ where: { tenantId: tenant.id, deletedAt: null }, orderBy: { createdAt: 'asc' } });
+    if (!store) {
+      store = await prisma.store.create({ data: { tenantId: tenant.id, name: tenant.name, externalId: 'loja-01' } });
+    }
+
+    const agentUuid = uuid();
+    const rawToken = generateAgentToken(tenant.id, agentUuid);
+    await prisma.agent.create({
+      data: { tenantId: tenant.id, storeId: store.id, tokenHash: hashToken(rawToken), channel: 'stable' },
+    });
+
+    reply.status(201).send({
+      token: rawToken,
+      tenantName: tenant.name,
+      pendingApproval: tenant.pendingApproval,
+      message: tenant.pendingApproval
+        ? 'Cadastro recebido. O agente vai aguardar a aprovacao do administrador antes de sincronizar.'
+        : 'Empresa ja aprovada — o agente pode sincronizar normalmente.',
+    });
+  });
+
   // Lista agentes do tenant
   app.get('/api/agents', { preHandler: [requireAuth] }, async (req) => {
     const agents = await prisma.agent.findMany({
