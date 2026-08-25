@@ -8,6 +8,10 @@ import { ContasPagarPage } from './pages/ContasPagarPage';
 import { ContasReceberPage } from './pages/ContasReceberPage';
 import { EmpresasPage } from './pages/EmpresasPage';
 import { UsuariosPage } from './pages/UsuariosPage';
+import { VendasPage } from './pages/VendasPage';
+import { ProdutosPage } from './pages/ProdutosPage';
+import { ClientesPage } from './pages/ClientesPage';
+import { PagamentosPage } from './pages/PagamentosPage';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -15,11 +19,10 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 // Paginas trazidas do trabalho local do Tarcisio (servidor ms-gestor, nunca commitado —
 // resgatado 23/08) que ainda nao tem backend correspondente. Aparecem no menu (o AppShell
 // ja lista todas) mas mostram um aviso em vez de tela quebrada/em branco.
+// Vendas/Produtos/Clientes/Pagamentos saíram daqui em 24/08 — endpoints implementados.
 const COMING_SOON: Record<string, string> = {
   '/meta-mensal': 'Meta Mensal',
-  '/vendas': 'Vendas',
   '/dav': 'DAV (Pré-vendas)',
-  '/pagamentos': 'Pagamentos',
   '/financeiro': 'Financeiro',
   '/movimento-caixa': 'Caixa',
   '/caixa-detalhado': 'Caixa Detalhado',
@@ -28,8 +31,6 @@ const COMING_SOON: Record<string, string> = {
   '/sugestao-compras': 'Sugestão de Compras',
   '/fechamento': 'Fechamento Mensal',
   '/relatorios': 'Relatórios',
-  '/produtos': 'Produtos',
-  '/clientes': 'Clientes',
 };
 
 export function App(): JSX.Element {
@@ -79,6 +80,10 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/' || path === '') return <DashboardPage />;
   if (path === '/contas-pagar') return <ContasPagarPage />;
   if (path === '/contas-receber') return <ContasReceberPage />;
+  if (path === '/vendas') return <VendasPage />;
+  if (path === '/produtos') return <ProdutosPage />;
+  if (path === '/clientes') return <ClientesPage />;
+  if (path === '/pagamentos') return <PagamentosPage />;
 
   // Empresas: console de gestao cross-tenant, so pra super-admin.
   if (path === '/empresas') return isSuperAdmin ? <EmpresasPage /> : <ComingSoon label="Empresas" />;
