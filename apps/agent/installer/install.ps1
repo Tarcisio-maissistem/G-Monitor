@@ -5,6 +5,10 @@
 # fica instalado e tentando conectar em backoff ate a aprovacao (nao precisa reinstalar).
 #   .\install.ps1 -Cnpj "12.345.678/0001-90" -SaasUrl "https://gmonitor-pilot.anafood.vip" -WsUrl "wss://gmonitor-pilot.anafood.vip/ws/agent" -FdbPath "C:\GDOOR Sistemas\GDOOR PRO\DATAGES.FDB" -FbPassword "masterkey"
 #
+# Modo 1b (pedido do dono 25/08): nem -Cnpj precisa — se nenhum dos dois for passado, o
+# instalador tenta achar o CNPJ sozinho no proprio Firebird (varre por coluna tipo CNPJ/CGC
+# nas tabelas do GDOOR) e pede confirmacao antes de usar. Se nao achar, pede pra digitar.
+#
 # Modo 2 (token ja gerado na mao pela tela de Empresas): igual ao anterior, so troca -Cnpj
 # por -Token "agt_xxx_xxx_xxx".
 
@@ -26,22 +30,46 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not $Token -and -not $Cnpj) {
-  Write-Error "Informe -Token (gerado na tela de Empresas) OU -Cnpj (autocadastro)."
-  exit 1
-}
-
 $installDir = "C:\Program Files\GMonitor\Agent"
 $dataDir = "$env:PROGRAMDATA\GMonitor"
 
 if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Force -Path $installDir | Out-Null }
 if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Force -Path $dataDir | Out-Null }
 
-# Copia o executavel se ele estiver do lado do script (download costuma trazer os dois juntos).
+# Copia o executavel se ele estiver do lado do script (download costuma trazer os dois
+# juntos) — precisa estar em $installDir ANTES da autodeteccao, que roda esse mesmo .exe.
 $exeSource = Join-Path $PSScriptRoot "gmonitor-agent.exe"
+$exePath = "$installDir\gmonitor-agent.exe"
 if (Test-Path $exeSource) {
-  Copy-Item -Path $exeSource -Destination "$installDir\gmonitor-agent.exe" -Force
+  Copy-Item -Path $exeSource -Destination $exePath -Force
   Write-Host "gmonitor-agent.exe copiado para $installDir"
+}
+
+if (-not $Token -and -not $Cnpj) {
+  if (Test-Path $exePath) {
+    Write-Host "Nenhum CNPJ informado — tentando achar sozinho no banco do GDOOR..."
+    try {
+      $detectJson = & $exePath --detect-cnpj --fdb-path $FdbPath --fb-user $FbUser --fb-password $FbPassword 2>$null
+      $detected = $detectJson | ConvertFrom-Json
+    } catch {
+      $detected = $null
+    }
+    if ($detected -and $detected.value) {
+      $formatted = $detected.value -replace '(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})', '$1.$2.$3/$4-$5'
+      $confirm = Read-Host "CNPJ encontrado: $formatted (tabela $($detected.table).$($detected.column)) — usar este? (S/n)"
+      if ($confirm -eq '' -or $confirm -match '^[sS]') {
+        $Cnpj = $formatted
+      }
+    }
+  }
+  if (-not $Cnpj) {
+    $Cnpj = Read-Host "Nao consegui achar o CNPJ sozinho — digite o CNPJ da empresa"
+  }
+}
+
+if (-not $Token -and -not $Cnpj) {
+  Write-Error "Informe -Token (gerado na tela de Empresas) OU -Cnpj (autocadastro)."
+  exit 1
 }
 
 if ($Cnpj) {
