@@ -23,6 +23,14 @@ const updateStoreSchema = z.object({
   timezone: z.string().optional(),
 });
 
+// Configuracoes de negocio (meta mensal, regras de comissao) — guardadas em Tenant.meta
+// (JSON) pra nao precisar de tabela nova so pra 2 campos. Usado por MetaMensalPage e
+// ComissaoPage (resgatadas 23/08, nunca tinham backend correspondente).
+const settingsSchema = z.object({
+  monthlyGoal: z.number().nonnegative().optional(),
+  commissionRules: z.array(z.object({ operator: z.string(), percent: z.number().min(0).max(100) })).optional(),
+});
+
 export async function tenantRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tenant/me', { preHandler: [requireAuth] }, async (req) => {
     const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId } });
@@ -40,6 +48,24 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
       },
     });
     return { tenant };
+  });
+
+  app.get('/api/tenant/settings', { preHandler: [requireAuth] }, async (req) => {
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
+    const meta = (tenant?.meta ?? {}) as Record<string, unknown>;
+    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules } };
+  });
+
+  app.patch('/api/tenant/settings', { preHandler: [requireAuth, requireCapability('tenant.update'), audit({ action: 'tenant.settings.update', captureBody: true })] }, async (req) => {
+    const body = settingsSchema.parse(req.body);
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
+    const meta = { ...(tenant?.meta as Record<string, unknown> ?? {}), ...body };
+    const updated = await prisma.tenant.update({
+      where: { id: req.user!.tenantId },
+      data: { meta: meta as Prisma.InputJsonValue },
+    });
+    const updatedMeta = updated.meta as Record<string, unknown>;
+    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules } };
   });
 
   app.get('/api/tenant/stores', { preHandler: [requireAuth] }, async (req) => {

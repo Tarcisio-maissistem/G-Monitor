@@ -12,6 +12,15 @@ import { VendasPage } from './pages/VendasPage';
 import { ProdutosPage } from './pages/ProdutosPage';
 import { ClientesPage } from './pages/ClientesPage';
 import { PagamentosPage } from './pages/PagamentosPage';
+import { MetaMensalPage } from './pages/MetaMensalPage';
+import { FinanceiroPage } from './pages/FinanceiroPage';
+import { MovimentoCaixaPage } from './pages/MovimentoCaixaPage';
+import { CaixaDetalhadoPage } from './pages/CaixaDetalhadoPage';
+import { ComissaoPage } from './pages/ComissaoPage';
+import { EstoqueAlertasPage } from './pages/EstoqueAlertasPage';
+import { SugestaoComprasPage } from './pages/SugestaoComprasPage';
+import { FechamentoMensalPage } from './pages/FechamentoMensalPage';
+import { RelatoriosPage } from './pages/RelatoriosPage';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -19,18 +28,10 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 // Paginas trazidas do trabalho local do Tarcisio (servidor ms-gestor, nunca commitado —
 // resgatado 23/08) que ainda nao tem backend correspondente. Aparecem no menu (o AppShell
 // ja lista todas) mas mostram um aviso em vez de tela quebrada/em branco.
-// Vendas/Produtos/Clientes/Pagamentos saíram daqui em 24/08 — endpoints implementados.
+// Vendas/Produtos/Clientes/Pagamentos saíram daqui em 24/08; as outras 9 em 25/08 —
+// endpoints implementados. So DAV continua aqui (sem model no schema, sem sync do agente).
 const COMING_SOON: Record<string, string> = {
-  '/meta-mensal': 'Meta Mensal',
   '/dav': 'DAV (Pré-vendas)',
-  '/financeiro': 'Financeiro',
-  '/movimento-caixa': 'Caixa',
-  '/caixa-detalhado': 'Caixa Detalhado',
-  '/comissao': 'Comissão',
-  '/alertas-estoque': 'Alertas de Estoque',
-  '/sugestao-compras': 'Sugestão de Compras',
-  '/fechamento': 'Fechamento Mensal',
-  '/relatorios': 'Relatórios',
 };
 
 export function App(): JSX.Element {
@@ -84,6 +85,15 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/produtos') return <ProdutosPage />;
   if (path === '/clientes') return <ClientesPage />;
   if (path === '/pagamentos') return <PagamentosPage />;
+  if (path === '/meta-mensal') return <MetaMensalPage />;
+  if (path === '/financeiro') return <FinanceiroPage />;
+  if (path === '/movimento-caixa') return <MovimentoCaixaPage />;
+  if (path === '/caixa-detalhado') return <CaixaDetalhadoPage />;
+  if (path === '/comissao') return <ComissaoPage />;
+  if (path === '/alertas-estoque') return <EstoqueAlertasPage />;
+  if (path === '/sugestao-compras') return <SugestaoComprasPage />;
+  if (path === '/fechamento') return <FechamentoMensalPage />;
+  if (path === '/relatorios') return <RelatoriosPage />;
 
   // Empresas: console de gestao cross-tenant, so pra super-admin.
   if (path === '/empresas') return isSuperAdmin ? <EmpresasPage /> : <ComingSoon label="Empresas" />;
