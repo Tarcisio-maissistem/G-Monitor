@@ -5,6 +5,7 @@ import { copyToClipboard } from '../lib/clipboard';
 import { useToast } from '../components/Toast';
 import { Spinner } from '../components/Spinner';
 import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
+import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart';
 
 interface SalesSummary {
   data: {
@@ -124,21 +125,24 @@ export function DashboardPage(): JSX.Element {
           {payments.error && <ErrorBox msg={(payments.error as Error).message} />}
           {payments.data && payments.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
           {payments.data && payments.data.data.rows.length > 0 && (
-            <div className="space-y-2">
-              {payments.data.data.rows.slice(0, 6).map((r) => (
-                <div key={r.paymentType} className="flex items-center gap-2">
-                  <span className="text-sm text-slate-600 w-32 truncate">{r.paymentType}</span>
-                  <div className="flex-1 bg-slate-100 rounded-full h-2">
-                    <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${(r.pct * 100).toFixed(1)}%` }} />
+            <div className="grid sm:grid-cols-2 gap-4 items-center">
+              <div className="space-y-2">
+                {payments.data.data.rows.slice(0, 6).map((r) => (
+                  <div key={r.paymentType} className="flex items-center gap-2">
+                    <span className="text-sm text-slate-600 w-32 truncate">{r.paymentType}</span>
+                    <div className="flex-1 bg-slate-100 rounded-full h-2">
+                      <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${(r.pct * 100).toFixed(1)}%` }} />
+                    </div>
+                    <span className="text-sm font-medium text-slate-700 w-24 text-right">{formatBRL(r.total)}</span>
+                    <span className="text-xs text-slate-400 w-10 text-right">{(r.pct * 100).toFixed(0)}%</span>
                   </div>
-                  <span className="text-sm font-medium text-slate-700 w-24 text-right">{formatBRL(r.total)}</span>
-                  <span className="text-xs text-slate-400 w-10 text-right">{(r.pct * 100).toFixed(0)}%</span>
+                ))}
+                <div className="pt-2 border-t text-sm font-semibold text-slate-700 flex justify-between">
+                  <span>Total</span>
+                  <span>{formatBRL(payments.data.data.grandTotal)}</span>
                 </div>
-              ))}
-              <div className="pt-2 border-t text-sm font-semibold text-slate-700 flex justify-between">
-                <span>Total</span>
-                <span>{formatBRL(payments.data.data.grandTotal)}</span>
               </div>
+              <PaymentMethodsChart rows={payments.data.data.rows} />
             </div>
           )}
         </section>

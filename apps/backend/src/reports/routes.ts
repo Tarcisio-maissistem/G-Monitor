@@ -716,6 +716,414 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     return { data: { rows, totalCustomers: firstPurchases.length }, meta };
   });
 
+  // ─── Meta Mensal, Financeiro, Comissão, Caixa, Fechamento, Relatórios (24/08) ──────────
+  // 10 paginas resgatadas 23/08 sem backend correspondente — endpoints implementados agora.
+  // NOTA (Alertas Estoque / Sugestão Compras): o agente ainda NAO sincroniza produto/estoque
+  // do GDOOR (so sales/saleItems/payments/payables/receivables) — Product fica vazio, entao
+  // esses 2 endpoints sempre voltam [] ate essa sync existir. idealStock tambem e estimado
+  // por velocidade de venda (GDOOR tem QTD_IDEAL real, mas isso nao chega aqui ainda).
+  // NOTA (Caixa/Caixa Detalhado): so ha dado de ENTRADA sincronizado (Payment). Nao existe
+  // sync de sangria/despesa/saida de caixa — "saida" sempre 0, nao e caixa zerado de verdade.
+
+  const yearMonthFilters = z.object({
+    year: z.coerce.number().int(),
+    month: z.coerce.number().int().min(1).max(12),
+    storeId: z.string().optional(),
+  });
+
+  app.get('/api/reports/monthly-goal', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = yearMonthFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const from = new Date(Date.UTC(query.year, query.month - 1, 1));
+    const to = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59));
+
+    const [tenant, agg] = await Promise.all([
+      prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } }),
+      prisma.sale.aggregate({
+        where: { tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+        _sum: { totalValue: true },
+        _count: true,
+      }),
+    ]);
+
+    const goal = Number((tenant?.meta as Record<string, unknown> | undefined)?.monthlyGoal ?? 0);
+    const achieved = Number(agg._sum.totalValue ?? 0);
+    const totalDays = new Date(Date.UTC(query.year, query.month, 0)).getUTCDate();
+    const now = new Date();
+    const isCurrentMonth = now.getUTCFullYear() === query.year && now.getUTCMonth() + 1 === query.month;
+    const isPastMonth = Date.UTC(query.year, query.month - 1, 1) < Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const elapsedDays = isCurrentMonth ? now.getUTCDate() : isPastMonth ? totalDays : 0;
+    const expectedByNow = goal > 0 && totalDays > 0 ? (goal * elapsedDays) / totalDays : 0;
+
+    return {
+      year: query.year,
+      month: query.month,
+      goal,
+      achieved,
+      remaining: Math.max(0, goal - achieved),
+      progressPct: goal > 0 ? (achieved / goal) * 100 : 0,
+      pacePct: expectedByNow > 0 ? (achieved / expectedByNow) * 100 : 0,
+      sales: agg._count,
+      totalDays,
+      elapsedDays,
+    };
+  });
+
+  app.get('/api/reports/financial', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('financial', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const scope = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) };
+
+    const [salesAgg, paymentGroups, receivablesAgg, receivablesCount, meta] = await Promise.all([
+      prisma.sale.aggregate({ where: { ...scope, cancelled: false, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
+      prisma.payment.groupBy({ by: ['paymentType'], where: { ...scope, paymentDate: { gte: from, lte: to } }, _sum: { value: true } }),
+      prisma.receivable.aggregate({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } }, _sum: { value: true, receivedValue: true } }),
+      prisma.receivable.count({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } } }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    const breakdown = { dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 };
+    const TYPE_MAP: Record<string, keyof typeof breakdown> = { DINHEIRO: 'dinheiro', CARTAO: 'cartao', PIX: 'pix', CREDIARIO: 'crediario' };
+    for (const g of paymentGroups) {
+      const key = TYPE_MAP[g.paymentType] ?? 'outros';
+      breakdown[key] += Number(g._sum.value ?? 0);
+    }
+
+    return {
+      data: {
+        revenue: Number(salesAgg._sum.totalValue ?? 0),
+        salesCount: salesAgg._count,
+        receivablesEstimate: Math.max(0, Number(receivablesAgg._sum.value ?? 0) - Number(receivablesAgg._sum.receivedValue ?? 0)),
+        receivablesCount,
+        paymentBreakdown: breakdown,
+      },
+      meta,
+    };
+  }));
+
+  app.get('/api/reports/commissions', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('commissions', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const [groups, tenant] = await Promise.all([
+      prisma.sale.groupBy({
+        by: ['operatorName'],
+        where: { tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+        _sum: { totalValue: true },
+        _count: true,
+        orderBy: { _sum: { totalValue: 'desc' } },
+      }),
+      prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } }),
+    ]);
+
+    const rules = ((tenant?.meta as Record<string, unknown> | undefined)?.commissionRules as Array<{ operator: string; percent: number }> | undefined) ?? [];
+    const ruleMap = new Map(rules.map((r) => [r.operator, r.percent]));
+
+    const data = groups.map((g) => {
+      const operator = g.operatorName ?? '(sem operador)';
+      const faturamento = Number(g._sum.totalValue ?? 0);
+      const vendas = g._count;
+      const percent = ruleMap.get(operator) ?? 0;
+      return { operator, vendas, faturamento, ticketMedio: vendas > 0 ? faturamento / vendas : 0, percent, comissao: faturamento * (percent / 100) };
+    });
+
+    const totals = data.reduce((acc, r) => ({ faturamento: acc.faturamento + r.faturamento, comissao: acc.comissao + r.comissao }), { faturamento: 0, comissao: 0 });
+    return { data, totals };
+  }));
+
+  // Velocidade de venda recente por produto (SaleItem) — usada pra estimar idealStock ate a
+  // sync real de produto/estoque existir (ver nota no topo desta secao).
+  async function productSalesVelocity(tenantId: string, storeId: string | null, days: number): Promise<Map<string, number>> {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const groups = await prisma.saleItem.groupBy({
+      by: ['productCode'],
+      where: { tenantId, ...(storeId ? { storeId } : {}), sale: { saleDate: { gte: since }, cancelled: false }, productCode: { not: null } },
+      _sum: { quantity: true },
+    });
+    return new Map(groups.filter((g) => g.productCode).map((g) => [g.productCode as string, Number(g._sum.quantity ?? 0)]));
+  }
+
+  app.get('/api/reports/stock-alerts', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const storeId = resolveStoreScope(req, (req.query as { storeId?: string }).storeId);
+    const [products, velocity] = await Promise.all([
+      prisma.product.findMany({ where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) }, take: 1000 }),
+      productSalesVelocity(req.user!.tenantId, storeId, 30),
+    ]);
+
+    const data = products
+      .map((p) => {
+        const stock = p.stock ? Number(p.stock) : 0;
+        const soldLast30 = velocity.get(p.sourceCode) ?? 0;
+        const idealStock = Math.ceil((soldLast30 / 30) * 15);
+        return { p, stock, idealStock };
+      })
+      .filter(({ stock, idealStock }) => idealStock > 0 && stock <= idealStock)
+      .map(({ p, stock, idealStock }) => {
+        const falta = idealStock - stock;
+        const severity: 'critico' | 'baixo' | 'alerta' = stock <= 0 ? 'critico' : falta > idealStock * 0.5 ? 'baixo' : 'alerta';
+        return { sourceCode: p.sourceCode, description: p.description, unit: p.unit, stock, idealStock, salePrice: p.salePrice ? Number(p.salePrice) : null, falta, severity };
+      })
+      .sort((a, b) => b.falta - a.falta);
+
+    return { data };
+  });
+
+  const suggestionFilters = z.object({ days: z.coerce.number().int().min(1).max(180).default(30), cover: z.coerce.number().int().min(1).max(180).default(15), storeId: z.string().optional() });
+
+  app.get('/api/reports/purchase-suggestions', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = suggestionFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const [products, velocity] = await Promise.all([
+      prisma.product.findMany({ where: { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) }, take: 1000 }),
+      productSalesVelocity(req.user!.tenantId, storeId, query.days),
+    ]);
+
+    const data = products
+      .map((p) => {
+        const currentStock = p.stock ? Number(p.stock) : 0;
+        const soldQty = velocity.get(p.sourceCode) ?? 0;
+        const dailyVelocity = soldQty / query.days;
+        const idealStock = Math.ceil(dailyVelocity * query.cover);
+        const daysOfCover = dailyVelocity > 0 ? currentStock / dailyVelocity : null;
+        const suggestedQty = Math.max(0, Math.ceil(idealStock - currentStock));
+        const cost = p.costPrice ? Number(p.costPrice) : null;
+        const priority: 'urgente' | 'recomendado' | 'opcional' =
+          daysOfCover !== null && daysOfCover < 3 ? 'urgente' : daysOfCover !== null && daysOfCover < query.cover ? 'recomendado' : 'opcional';
+        return {
+          sourceCode: p.sourceCode, description: p.description, unit: p.unit, currentStock, idealStock, soldQty, dailyVelocity,
+          daysOfCover, suggestedQty, cost, estimatedCost: suggestedQty * (cost ?? 0), priority,
+        };
+      })
+      .filter((r) => r.suggestedQty > 0)
+      .sort((a, b) => b.estimatedCost - a.estimatedCost);
+
+    return { data };
+  });
+
+  app.get('/api/reports/monthly-closing', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('monthly-closing', async (req) => {
+    const query = yearMonthFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const from = new Date(Date.UTC(query.year, query.month - 1, 1));
+    const to = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59));
+
+    const [saleRows, paymentRows, meta] = await Promise.all([
+      prisma.$queryRaw<{ day: Date; qtd: bigint; canceladas: bigint; total: unknown }[]>(
+        storeId
+          ? Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false) AS qtd,
+                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false), 0) AS total
+              FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`
+          : Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false) AS qtd,
+                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false), 0) AS total
+              FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`,
+      ),
+      prisma.$queryRaw<{ day: Date; paymentType: string; total: unknown }[]>(
+        storeId
+          ? Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, "paymentType", SUM("value") AS total
+              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`
+          : Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, "paymentType", SUM("value") AS total
+              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`,
+      ),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    type DayRow = { dia: string; qtd: number; canceladas: number; total: number; ticket: number; dinheiro: number; cartao: number; pix: number; crediario: number; outros: number };
+    const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+    const TYPE_MAP: Record<string, keyof DayRow> = { DINHEIRO: 'dinheiro', CARTAO: 'cartao', PIX: 'pix', CREDIARIO: 'crediario' };
+    const dayMap = new Map<string, DayRow>();
+    const emptyDay = (dia: string): DayRow => ({ dia, qtd: 0, canceladas: 0, total: 0, ticket: 0, dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 });
+
+    for (const r of saleRows) {
+      const key = dayKey(r.day);
+      const qtd = Number(r.qtd);
+      const total = Number(r.total);
+      dayMap.set(key, { ...emptyDay(key), qtd, canceladas: Number(r.canceladas), total, ticket: qtd > 0 ? total / qtd : 0 });
+    }
+    for (const r of paymentRows) {
+      const key = dayKey(r.day);
+      if (!dayMap.has(key)) dayMap.set(key, emptyDay(key));
+      const row = dayMap.get(key)!;
+      const field = TYPE_MAP[r.paymentType] ?? 'outros';
+      (row[field] as number) += Number(r.total);
+    }
+
+    const data = [...dayMap.values()].sort((a, b) => a.dia.localeCompare(b.dia));
+    const totals = data.reduce<DayRow>(
+      (acc, d) => ({
+        dia: 'total', qtd: acc.qtd + d.qtd, canceladas: acc.canceladas + d.canceladas, total: acc.total + d.total, ticket: 0,
+        dinheiro: acc.dinheiro + d.dinheiro, cartao: acc.cartao + d.cartao, pix: acc.pix + d.pix, crediario: acc.crediario + d.crediario, outros: acc.outros + d.outros,
+      }),
+      emptyDay('total'),
+    );
+    totals.ticket = totals.qtd > 0 ? totals.total / totals.qtd : 0;
+
+    return { period: { year: query.year, month: query.month }, data, totals, meta };
+  }));
+
+  app.get('/api/reports/cash-movements', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cash-movements', async (req) => {
+    const query = listPageFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const where = { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) };
+
+    const [rows, total, agg] = await Promise.all([
+      prisma.payment.findMany({ where, orderBy: { paymentDate: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.payment.count({ where }),
+      prisma.payment.aggregate({ where, _sum: { value: true } }),
+    ]);
+
+    const entrada = Number(agg._sum.value ?? 0);
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        sourceId: r.sourceId,
+        movementDate: r.paymentDate,
+        entrada: Number(r.value),
+        saida: 0,
+        historico: r.paymentType,
+      })),
+      pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
+      summary: { entrada, saida: 0, saldo: entrada },
+    };
+  }));
+
+  app.get('/api/reports/cash-detailed', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cash-detailed', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const rows = await prisma.$queryRaw<{ day: Date; entradas: unknown; movimentos: bigint }[]>(
+      storeId
+        ? Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, SUM("value") AS entradas, COUNT(*) AS movimentos
+            FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1`
+        : Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, SUM("value") AS entradas, COUNT(*) AS movimentos
+            FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1`,
+    );
+
+    const sorted = rows
+      .map((r) => ({ dia: r.day.toISOString().slice(0, 10), entradas: Number(r.entradas), saidas: 0, movimentos: Number(r.movimentos) }))
+      .sort((a, b) => a.dia.localeCompare(b.dia));
+
+    let acumulado = 0;
+    const data = sorted.map((r) => {
+      const saldoDia = r.entradas - r.saidas;
+      acumulado += saldoDia;
+      return { ...r, saldoDia, saldoAcumulado: acumulado };
+    });
+
+    return { data, totals: { entradas: data.reduce((s, d) => s + d.entradas, 0), saidas: 0, saldoFinal: acumulado } };
+  }));
+
+  app.get('/api/reports/sales-comparison', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales-comparison', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86_400_000);
+    const scopedWhere = (f: Date, t: Date) => ({ tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: f, lte: t }, ...(storeId ? { storeId } : {}) });
+
+    const [curAgg, prevAgg] = await Promise.all([
+      prisma.sale.aggregate({ where: scopedWhere(from, to), _sum: { totalValue: true }, _count: true }),
+      prisma.sale.aggregate({ where: scopedWhere(prevFrom, prevTo), _sum: { totalValue: true }, _count: true }),
+    ]);
+
+    const build = (f: Date, t: Date, agg: typeof curAgg) => ({
+      from: f.toISOString().slice(0, 10),
+      to: t.toISOString().slice(0, 10),
+      sales: agg._count,
+      revenue: Number(agg._sum.totalValue ?? 0),
+      ticket: agg._count > 0 ? Number(agg._sum.totalValue ?? 0) / agg._count : 0,
+    });
+    const cur = build(from, to, curAgg);
+    const prev = build(prevFrom, prevTo, prevAgg);
+    const pct = (c: number, p: number) => (p > 0 ? ((c - p) / p) * 100 : c > 0 ? 100 : 0);
+
+    return { current: cur, previous: prev, growth: { sales: pct(cur.sales, prev.sales), revenue: pct(cur.revenue, prev.revenue), ticket: pct(cur.ticket, prev.ticket) } };
+  }));
+
+  app.get('/api/reports/sales-by-weekday', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales-by-weekday', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const rows = await prisma.$queryRaw<{ dow: number; total: unknown; qtd: bigint }[]>(
+      storeId
+        ? Prisma.sql`SELECT EXTRACT(DOW FROM "saleDate")::int AS dow, SUM("totalValue") AS total, COUNT(*) AS qtd
+            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`
+        : Prisma.sql`SELECT EXTRACT(DOW FROM "saleDate")::int AS dow, SUM("totalValue") AS total, COUNT(*) AS qtd
+            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`,
+    );
+
+    // Conta quantos de cada dia-da-semana existem no periodo (independente de ter venda),
+    // pra tirar media por dia de verdade — nao so media sobre dias com venda.
+    const diasPorDow = [0, 0, 0, 0, 0, 0, 0];
+    for (let d = new Date(from); d <= to; d = new Date(d.getTime() + 86_400_000)) {
+      diasPorDow[d.getUTCDay()]!++;
+    }
+
+    const LABELS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const byDow = new Map(rows.map((r) => [r.dow, r]));
+    const data = LABELS.map((label, dia) => {
+      const r = byDow.get(dia);
+      const totalQtd = r ? Number(r.qtd) : 0;
+      const totalRevenue = r ? Number(r.total) : 0;
+      const diasObservados = diasPorDow[dia]!;
+      return { dia, label, diasObservados, totalQtd, totalRevenue, mediaQtdPorDia: diasObservados > 0 ? totalQtd / diasObservados : 0, mediaRevenuePorDia: diasObservados > 0 ? totalRevenue / diasObservados : 0 };
+    });
+
+    return { data };
+  }));
+
+  app.get('/api/reports/product-margin', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('product-margin', async (req) => {
+    const query = z.object({ from: z.string().date().optional(), to: z.string().date().optional(), storeId: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const items = await prisma.saleItem.groupBy({
+      by: ['productCode', 'description'],
+      where: { tenantId: req.user!.tenantId, sale: { saleDate: { gte: from, lte: to }, cancelled: false }, ...(storeId ? { storeId } : {}) },
+      _sum: { totalValue: true, quantity: true },
+      orderBy: { _sum: { totalValue: 'desc' } },
+      take: query.limit,
+    });
+
+    const codes = items.map((i) => i.productCode).filter((c): c is string => !!c);
+    const products = codes.length
+      ? await prisma.product.findMany({ where: { tenantId: req.user!.tenantId, sourceCode: { in: codes } }, select: { sourceCode: true, costPrice: true } })
+      : [];
+    const costByCode = new Map(products.map((p) => [p.sourceCode, p.costPrice ? Number(p.costPrice) : null]));
+
+    const data = items.map((i) => {
+      const receita = Number(i._sum.totalValue ?? 0);
+      const qtd = Number(i._sum.quantity ?? 0);
+      const cost = i.productCode ? costByCode.get(i.productCode) : null;
+      const custoTotal = cost != null ? cost * qtd : 0;
+      const margem = receita - custoTotal;
+      return { productCode: i.productCode, description: i.description, qtdVendida: qtd, receita, custoTotal, margem, margemPct: receita > 0 ? (margem / receita) * 100 : 0 };
+    });
+
+    return { data };
+  }));
+
+  app.get('/api/reports/dashboard/top-operators', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('top-operators', async (req) => {
+    const query = z.object({ from: z.string().date().optional(), to: z.string().date().optional(), storeId: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const groups = await prisma.sale.groupBy({
+      by: ['operatorName'],
+      where: { tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+      _sum: { totalValue: true },
+      _count: true,
+      orderBy: { _sum: { totalValue: 'desc' } },
+      take: query.limit,
+    });
+
+    return { data: groups.map((g) => ({ operator: g.operatorName, qtd: g._count, value: Number(g._sum.totalValue ?? 0) })) };
+  }));
+
   registerFinanceRoutes(app);
 }
 
