@@ -39,6 +39,11 @@ Thumbs.db
 apps/agent/release/
 apps/agent/*.exe
 
+# Binarios do instalador servidos como estatico pelo web (nginx de gmonitor-pilot.anafood.vip
+# serve dist/ direto, ver docker/nginx-pilot-vhost.conf) — copiados manualmente pra ca a
+# cada release do agente, nunca commitados (65MB, muda a cada versao do agente).
+apps/web/public/downloads/
+
 # Dados locais
 data/
 *.sqlite

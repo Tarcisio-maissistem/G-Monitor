@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useRoute } from '../lib/router';
 import { TenantSelector } from './TenantSelector';
+import { NotificationBell } from './NotificationBell';
 
 interface NavItem {
   label: string;
@@ -69,9 +70,12 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
       >
         <div className="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
           <h1 className="text-lg font-bold">G-Monitor</h1>
-          <button onClick={() => setMobileOpen(false)} className="lg:hidden text-slate-400 hover:text-white text-xl leading-none" aria-label="Fechar menu">
-            ×
-          </button>
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button onClick={() => setMobileOpen(false)} className="lg:hidden text-slate-400 hover:text-white text-xl leading-none" aria-label="Fechar menu">
+              ×
+            </button>
+          </div>
         </div>
         <TenantSelector />
         <nav className="flex-1 py-3 space-y-1 overflow-y-auto">

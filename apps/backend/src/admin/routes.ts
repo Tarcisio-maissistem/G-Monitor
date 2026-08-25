@@ -42,12 +42,33 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         phone: true,
         plan: true,
         subscriptionStatus: true,
+        pendingApproval: true,
         createdAt: true,
         _count: { select: { agents: true, stores: true, users: true } },
       },
     });
     return { tenants };
   });
+
+  // Aprova empresa que se autocadastrou pelo login (pedido do dono 24/08) — libera o
+  // WS/sync do agente, que ja estava tentando conectar em backoff desde o cadastro.
+  app.post<{ Params: { id: string } }>(
+    '/api/admin/tenants/:id/approve',
+    { preHandler: [requireAuth, requireSuperAdmin, audit({ action: 'tenant.approve', entity: 'tenant' })] },
+    async (req) => {
+      const tenant = await prisma.tenant.findFirst({ where: { id: req.params.id, deletedAt: null } });
+      if (!tenant) throw Errors.notFound('Empresa nao encontrada');
+
+      await prisma.$transaction([
+        prisma.tenant.update({ where: { id: tenant.id }, data: { pendingApproval: false } }),
+        prisma.notification.updateMany({
+          where: { tenantId: tenant.id, type: 'signup_pending', readAt: null },
+          data: { readAt: new Date() },
+        }),
+      ]);
+      return { ok: true };
+    },
+  );
 
   app.post('/api/admin/tenants', { preHandler: [requireAuth, requireSuperAdmin, audit({ action: 'tenant.create', entity: 'tenant', captureBody: true })] }, async (req, reply) => {
     const body = createTenantSchema.parse(req.body);

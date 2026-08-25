@@ -11,7 +11,9 @@ import { logger } from '../logger.js';
 
 const signupSchema = z.object({
   tenantName: z.string().min(2).max(120),
-  cnpj: z.string().optional(),
+  // CNPJ obrigatorio: e a chave que o instalador usa pra achar a empresa e pedir o token
+  // do agente (POST /api/agents/register-by-cnpj) — pedido do dono 24/08.
+  cnpj: z.string().min(14),
   email: z.string().email(),
   name: z.string().min(2),
   password: z.string().min(12),
@@ -24,19 +26,22 @@ const loginSchema = z.object({
 });
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
+  // Autocadastro pelo login (pedido do dono 24/08): cria tenant + loja padrao + owner,
+  // MAS fica pendingApproval=true — agente ate registra token (register-by-cnpj), mas
+  // WS/sync ficam bloqueados ate o super-admin aprovar. Notificacao criada aqui pra
+  // aparecer no sino do painel do super-admin.
   app.post('/api/auth/signup', async (req, reply) => {
     const body = signupSchema.parse(req.body);
 
-    const existing = await prisma.tenant.findFirst({
-      where: body.cnpj ? { cnpj: body.cnpj } : { users: { some: { email: body.email } } },
-    });
-    if (existing) throw Errors.conflict('Tenant ou email ja cadastrado');
+    const existing = await prisma.tenant.findFirst({ where: { cnpj: body.cnpj } });
+    if (existing) throw Errors.conflict('CNPJ ja cadastrado');
 
     const passwordHash = await hashPassword(body.password);
     const tenant = await prisma.tenant.create({
       data: {
         name: body.tenantName,
-        cnpj: body.cnpj ?? null,
+        cnpj: body.cnpj,
+        pendingApproval: true,
         users: {
           create: {
             email: body.email,
@@ -45,12 +50,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
             role: 'owner',
           },
         },
+        stores: {
+          create: { name: body.tenantName, externalId: 'loja-01' },
+        },
+        notifications: {
+          create: {
+            type: 'signup_pending',
+            title: 'Nova empresa aguardando aprovação',
+            body: `${body.tenantName} se cadastrou pelo login e está esperando você autorizar.`,
+          },
+        },
       },
       include: { users: true },
     });
 
-    logger.info({ tenantId: tenant.id }, 'tenant created');
-    reply.status(201).send({ tenantId: tenant.id, ownerId: tenant.users[0]!.id });
+    logger.info({ tenantId: tenant.id }, 'tenant created (pending approval)');
+    reply.status(201).send({ tenantId: tenant.id, ownerId: tenant.users[0]!.id, pendingApproval: true });
   });
 
   app.post('/api/auth/login', async (req, reply) => {
