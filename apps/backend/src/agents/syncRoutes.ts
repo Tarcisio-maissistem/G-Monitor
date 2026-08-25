@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
-import { prisma } from '../db/prisma.js';
+import { prisma, prismaSync } from '../db/prisma.js';
 import { hashToken } from '../auth/tokens.js';
 
 // Endpoint HTTP usado pelo AGENTE para empurrar lotes de sync.
@@ -22,35 +24,39 @@ const syncBatchSchema = z.object({
   checkpoint: z.string(),
 });
 
-// Roda `fn` sobre `items` com no maximo `limit` chamadas em voo ao mesmo tempo.
-// Sem isso, Promise.all(rows.map(...)) num lote de 1000 estoura o pool de conexoes do Prisma
-// (default 9) — achado ao vivo no piloto 22/08, junto com o timeout de $transaction sequencial.
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker(): Promise<void> {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i] as T);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return results;
-}
+// Bulk upsert multi-linha (decisao D14, openspec/changes/create-saas-platform/design.md) —
+// substitui N upserts individuais (N round-trips de rede) por 1 statement so, INSERT ...
+// VALUES (...), (...) ON CONFLICT DO UPDATE. Achado no incidente de 24/08: com ITEVENDAS
+// (652 mil linhas) e MOV_OPERADORES (195 mil), mesmo com concorrencia/lote pequenos, o custo
+// de N round-trips (~180ms cada, Supabase sa-east-1) sozinho ja levava horas E estourava o
+// connection_limit do pooler compartilhado com os relatorios do dono (P1001 ao vivo). Com
+// bulk upsert, o backlog inteiro de uma tabela vira 1 statement por lote (ate 1000 linhas),
+// nao 1000 round-trips — o gargalo deixa de ser rede e vira throughput de escrita do
+// Postgres, que aguenta bem mais. Roda no prismaSync (pool isolado, ver db/prisma.ts) pra
+// nao competir por conexao com as leituras normais do dashboard.
+async function bulkUpsert(
+  table: string,
+  columns: string[],
+  conflictColumns: string[],
+  rows: Record<string, unknown>[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const updateColumns = columns.filter((c) => !conflictColumns.includes(c));
+  const allColumns = ['id', ...columns];
 
-// Deixa uma boa folga do connection_limit do DATABASE_URL pro resto do app (login, dashboard,
-// relatorios) nao passar fome enquanto o sync de um backlog grande roda em segundo plano —
-// achado ao vivo no piloto 22/08 (login e telas ficando lentos com concorrencia = quase o limite).
-// Reduzido de 6 -> 2 em 24/08 (incidente real): mesmo com lote de 200 (ver syncer.ts), o
-// backend chegou a devolver P1001 "Can't reach database server" pro dashboard do Tarcisio
-// durante o backlog de saleItems/payments — nao era so fila lenta, o POOLER do Supabase
-// ficou sem slot de conexao disponivel com 6 upserts simultaneos + as leituras normais do
-// dashboard competindo pelo mesmo connection_limit=15.
-const SYNC_CONCURRENCY = 2;
+  const valueRows = rows.map((r) => Prisma.sql`(${Prisma.join(allColumns.map((c) => (c === 'id' ? randomUUID() : (r[c] ?? null))))})`);
+
+  const tableIdent = Prisma.raw(`"${table}"`);
+  const colIdent = Prisma.raw(allColumns.map((c) => `"${c}"`).join(', '));
+  const conflictIdent = Prisma.raw(conflictColumns.map((c) => `"${c}"`).join(', '));
+  const updateSet = Prisma.raw(updateColumns.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', '));
+
+  await prismaSync.$executeRaw`
+    INSERT INTO ${tableIdent} (${colIdent}) VALUES ${Prisma.join(valueRows)}
+    ON CONFLICT (${conflictIdent}) DO UPDATE SET ${updateSet}
+  `;
+  return rows.length;
+}
 
 async function authenticateAgent(
   authHeader: string | undefined,
@@ -74,77 +80,47 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     const ctx = await authenticateAgent(req.headers.authorization);
     const body = syncBatchSchema.parse(req.body);
 
-    // Upserts rodam em paralelo (Promise.all), fora de uma transacao interativa: um lote de
-    // ate 1000 linhas sequenciais contra o Supabase (rede, nao localhost) estourava o timeout
-    // do Prisma e nunca terminava (achado ao vivo no piloto 22/08). Cada upsert ja e idempotente
-    // sozinho, entao nao perde correcao por rodar fora de uma transacao — só perde o "tudo ou
-    // nada" do lote inteiro, que aqui nao e necessario (proximo tick reenvia o que faltou).
     let persisted = 0;
 
     switch (body.table) {
       case 'sales':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.sale.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                saleDate: new Date(String(r.saleDate)),
-                customerSourceId: r.customerSourceId ? String(r.customerSourceId) : null,
-                operatorName: r.operatorName ? String(r.operatorName) : null,
-                caixa: r.caixa ? String(r.caixa) : null,
-                modelo: r.modelo ? String(r.modelo) : null,
-                natureza: r.natureza ? String(r.natureza) : null,
-                totalValue: Number(r.totalValue ?? 0),
-                cancelled: Boolean(r.cancelled),
-                processed: Boolean(r.processed ?? true),
-              },
-              update: {
-                saleDate: new Date(String(r.saleDate)),
-                customerSourceId: r.customerSourceId ? String(r.customerSourceId) : null,
-                operatorName: r.operatorName ? String(r.operatorName) : null,
-                caixa: r.caixa ? String(r.caixa) : null,
-                modelo: r.modelo ? String(r.modelo) : null,
-                natureza: r.natureza ? String(r.natureza) : null,
-                totalValue: Number(r.totalValue ?? 0),
-                cancelled: Boolean(r.cancelled),
-                processed: Boolean(r.processed ?? true),
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'sales',
+          ['tenantId', 'storeId', 'sourceId', 'saleDate', 'customerSourceId', 'operatorName', 'caixa', 'modelo', 'natureza', 'totalValue', 'cancelled', 'processed', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            saleDate: new Date(String(r.saleDate)),
+            customerSourceId: r.customerSourceId ? String(r.customerSourceId) : null,
+            operatorName: r.operatorName ? String(r.operatorName) : null,
+            caixa: r.caixa ? String(r.caixa) : null,
+            modelo: r.modelo ? String(r.modelo) : null,
+            natureza: r.natureza ? String(r.natureza) : null,
+            totalValue: Number(r.totalValue ?? 0),
+            cancelled: Boolean(r.cancelled),
+            processed: Boolean(r.processed ?? true),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })),
+        );
         break;
+
       case 'saleItems': {
         // Monta mapa saleSourceId -> sale.id para resolver FK em batch
-        const saleSourceIds = [
-          ...new Set(body.rows.map((r) => String(r.saleSourceId)).filter(Boolean)),
-        ];
-        const parentSales = await prisma.sale.findMany({
+        const saleSourceIds = [...new Set(body.rows.map((r) => String(r.saleSourceId)).filter(Boolean))];
+        const parentSales = await prismaSync.sale.findMany({
           where: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: { in: saleSourceIds } },
           select: { id: true, sourceId: true },
         });
         const saleMap = new Map(parentSales.map((s) => [s.sourceId, s.id]));
 
-        const results = await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) => {
-          const saleId = saleMap.get(String(r.saleSourceId));
-          if (!saleId) return Promise.resolve(null); // venda pai ainda nao sincronizada
-          return prisma.saleItem.upsert({
-            where: {
-              tenantId_storeId_sourceId: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-              },
-            },
-            create: {
+        const rows = body.rows
+          .map((r) => {
+            const saleId = saleMap.get(String(r.saleSourceId));
+            if (!saleId) return null; // venda pai ainda nao sincronizada — proximo tick reenvia
+            return {
               tenantId: ctx.tenantId,
               storeId: ctx.storeId,
               saleId,
@@ -154,242 +130,150 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               quantity: Number(r.quantity ?? 0),
               unitValue: Number(r.unitValue ?? 0),
               totalValue: Number(r.totalValue ?? 0),
-            },
-            update: {
-              productCode: r.productCode ? String(r.productCode) : null,
-              description: r.description ? String(r.description) : null,
-              quantity: Number(r.quantity ?? 0),
-              unitValue: Number(r.unitValue ?? 0),
-              totalValue: Number(r.totalValue ?? 0),
-            },
-          });
-        });
-        persisted = results.filter(Boolean).length;
+              createdAt: new Date(),
+            };
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== null);
+
+        persisted = await bulkUpsert(
+          'sale_items',
+          ['tenantId', 'storeId', 'saleId', 'sourceId', 'productCode', 'description', 'quantity', 'unitValue', 'totalValue', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          rows,
+        );
         break;
       }
 
       case 'payments': {
-        // saleId e opcional; tenta resolver pelo sourceId da venda se enviado
-        const saleSourceIds = [
-          ...new Set(
-            body.rows.map((r) => (r.saleSourceId ? String(r.saleSourceId) : null)).filter(Boolean),
-          ),
-        ] as string[];
+        const saleSourceIds = [...new Set(body.rows.map((r) => (r.saleSourceId ? String(r.saleSourceId) : null)).filter(Boolean))] as string[];
         const parentSales = saleSourceIds.length
-          ? await prisma.sale.findMany({
-              where: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: { in: saleSourceIds },
-              },
+          ? await prismaSync.sale.findMany({
+              where: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: { in: saleSourceIds } },
               select: { id: true, sourceId: true },
             })
           : [];
         const saleMap = new Map(parentSales.map((s) => [s.sourceId, s.id]));
 
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) => {
-            const saleId = r.saleSourceId ? (saleMap.get(String(r.saleSourceId)) ?? null) : null;
-            return prisma.payment.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                saleId,
-                paymentDate: new Date(String(r.paymentDate)),
-                paymentType: String(r.paymentType ?? 'OUTROS'),
-                especie: r.especie ? String(r.especie) : null,
-                value: Number(r.value ?? 0),
-              },
-              update: {
-                paymentDate: new Date(String(r.paymentDate)),
-                paymentType: String(r.paymentType ?? 'OUTROS'),
-                especie: r.especie ? String(r.especie) : null,
-                value: Number(r.value ?? 0),
-              },
-            });
-          })
-        ).length;
+        persisted = await bulkUpsert(
+          'payments',
+          ['tenantId', 'storeId', 'sourceId', 'saleId', 'paymentDate', 'paymentType', 'especie', 'value', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            saleId: r.saleSourceId ? (saleMap.get(String(r.saleSourceId)) ?? null) : null,
+            paymentDate: new Date(String(r.paymentDate)),
+            paymentType: String(r.paymentType ?? 'OUTROS'),
+            especie: r.especie ? String(r.especie) : null,
+            value: Number(r.value ?? 0),
+            createdAt: new Date(),
+          })),
+        );
         break;
       }
 
       case 'customers':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.customer.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                name: r.name ? String(r.name) : null,
-                document: r.document ? String(r.document) : null,
-                phone: r.phone ? String(r.phone) : null,
-                email: r.email ? String(r.email) : null,
-              },
-              update: {
-                name: r.name ? String(r.name) : null,
-                document: r.document ? String(r.document) : null,
-                phone: r.phone ? String(r.phone) : null,
-                email: r.email ? String(r.email) : null,
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'customers',
+          ['tenantId', 'storeId', 'sourceId', 'name', 'document', 'phone', 'email', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            name: r.name ? String(r.name) : null,
+            document: r.document ? String(r.document) : null,
+            phone: r.phone ? String(r.phone) : null,
+            email: r.email ? String(r.email) : null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })),
+        );
         break;
 
       case 'products':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.product.upsert({
-              where: {
-                tenantId_storeId_sourceCode: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceCode: String(r.sourceCode),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceCode: String(r.sourceCode),
-                description: String(r.description ?? ''),
-                unit: r.unit ? String(r.unit) : null,
-                stock: r.stock != null ? Number(r.stock) : null,
-                costPrice: r.costPrice != null ? Number(r.costPrice) : null,
-                salePrice: r.salePrice != null ? Number(r.salePrice) : null,
-              },
-              update: {
-                description: String(r.description ?? ''),
-                unit: r.unit ? String(r.unit) : null,
-                stock: r.stock != null ? Number(r.stock) : null,
-                costPrice: r.costPrice != null ? Number(r.costPrice) : null,
-                salePrice: r.salePrice != null ? Number(r.salePrice) : null,
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'products',
+          ['tenantId', 'storeId', 'sourceCode', 'description', 'unit', 'stock', 'costPrice', 'salePrice', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceCode'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceCode: String(r.sourceCode),
+            description: String(r.description ?? ''),
+            unit: r.unit ? String(r.unit) : null,
+            stock: r.stock != null ? Number(r.stock) : null,
+            costPrice: r.costPrice != null ? Number(r.costPrice) : null,
+            salePrice: r.salePrice != null ? Number(r.salePrice) : null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })),
+        );
         break;
 
       case 'cashClosings':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.cashClosing.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                openedAt: new Date(String(r.openedAt)),
-                closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
-                operatorName: r.operatorName ? String(r.operatorName) : null,
-                totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
-                totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
-                difference: r.difference != null ? Number(r.difference) : null,
-              },
-              update: {
-                closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
-                operatorName: r.operatorName ? String(r.operatorName) : null,
-                totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
-                totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
-                difference: r.difference != null ? Number(r.difference) : null,
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'cash_closings',
+          ['tenantId', 'storeId', 'sourceId', 'openedAt', 'closedAt', 'operatorName', 'totalExpected', 'totalCounted', 'difference', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            openedAt: new Date(String(r.openedAt)),
+            closedAt: r.closedAt ? new Date(String(r.closedAt)) : null,
+            operatorName: r.operatorName ? String(r.operatorName) : null,
+            totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
+            totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
+            difference: r.difference != null ? Number(r.difference) : null,
+            createdAt: new Date(),
+          })),
+        );
         break;
 
       case 'payables':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.payable.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                dueDate: new Date(String(r.dueDate)),
-                value: Number(r.value ?? 0),
-                paidValue: Number(r.paidValue ?? 0),
-                paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
-                counterparty: r.counterparty ? String(r.counterparty) : null,
-                description: r.description ? String(r.description) : null,
-                cancelled: Boolean(r.cancelled),
-              },
-              update: {
-                dueDate: new Date(String(r.dueDate)),
-                value: Number(r.value ?? 0),
-                paidValue: Number(r.paidValue ?? 0),
-                paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
-                counterparty: r.counterparty ? String(r.counterparty) : null,
-                description: r.description ? String(r.description) : null,
-                cancelled: Boolean(r.cancelled),
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'payables',
+          ['tenantId', 'storeId', 'sourceId', 'dueDate', 'value', 'paidValue', 'paidDate', 'counterparty', 'description', 'cancelled', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            dueDate: new Date(String(r.dueDate)),
+            value: Number(r.value ?? 0),
+            paidValue: Number(r.paidValue ?? 0),
+            paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
+            counterparty: r.counterparty ? String(r.counterparty) : null,
+            description: r.description ? String(r.description) : null,
+            cancelled: Boolean(r.cancelled),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })),
+        );
         break;
 
       case 'receivables':
-        persisted = (
-          await mapWithConcurrency(body.rows, SYNC_CONCURRENCY, (r) =>
-            prisma.receivable.upsert({
-              where: {
-                tenantId_storeId_sourceId: {
-                  tenantId: ctx.tenantId,
-                  storeId: ctx.storeId,
-                  sourceId: String(r.sourceId),
-                },
-              },
-              create: {
-                tenantId: ctx.tenantId,
-                storeId: ctx.storeId,
-                sourceId: String(r.sourceId),
-                dueDate: new Date(String(r.dueDate)),
-                value: Number(r.value ?? 0),
-                receivedValue: Number(r.receivedValue ?? 0),
-                receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
-                counterparty: r.counterparty ? String(r.counterparty) : null,
-                description: r.description ? String(r.description) : null,
-                cancelled: Boolean(r.cancelled),
-              },
-              update: {
-                dueDate: new Date(String(r.dueDate)),
-                value: Number(r.value ?? 0),
-                receivedValue: Number(r.receivedValue ?? 0),
-                receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
-                counterparty: r.counterparty ? String(r.counterparty) : null,
-                description: r.description ? String(r.description) : null,
-                cancelled: Boolean(r.cancelled),
-              },
-            }),
-          )
-        ).length;
+        persisted = await bulkUpsert(
+          'receivables',
+          ['tenantId', 'storeId', 'sourceId', 'dueDate', 'value', 'receivedValue', 'receivedDate', 'counterparty', 'description', 'cancelled', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            dueDate: new Date(String(r.dueDate)),
+            value: Number(r.value ?? 0),
+            receivedValue: Number(r.receivedValue ?? 0),
+            receivedDate: r.receivedDate ? new Date(String(r.receivedDate)) : null,
+            counterparty: r.counterparty ? String(r.counterparty) : null,
+            description: r.description ? String(r.description) : null,
+            cancelled: Boolean(r.cancelled),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })),
+        );
         break;
 
       default:
