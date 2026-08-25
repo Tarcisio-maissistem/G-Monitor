@@ -8,15 +8,13 @@ import { logger } from '../logger.js';
 // Loop de sincronizacao incremental.
 // Le pelo catalogo (sync-sales-batch etc), empurra ao SaaS via HTTP POST.
 
-// Reduzido de 1000 -> 200 em 24/08 (incidente real): cada upsert paga ~180ms de RTT ate o
-// Supabase (medido); com 5 tabelas sincronizando (sales/saleItems/payments/payables/
-// receivables) e lote de 1000, cada tick levava 30-60s+ — mais que o intervalo do proprio
-// tick (syncIntervalMs=30s), entao os ciclos comecaram a se EMPILHAR (setInterval nao
-// espera o anterior terminar), afogando o pool de conexao do backend e derrubando
-// respostas normais do dashboard pro usuario (500/504 reais vistos por Tarcisio 24/08,
-// 996 requests de /api/agent/sync levando ate 60s). Lote menor = cada tick termina bem
-// dentro da janela de 30s, sem empilhar.
-const BATCH_SIZE = 200;
+// Reduzido de 1000 -> 200 em 24/08 (incidente real, causa raiz na epoca: backend fazia UM
+// upsert Prisma por linha — 200-1000 round-trips de rede por lote). Voltado a 1000 em 25/08
+// (decisao D14, ver openspec/design.md): o backend agora faz bulk upsert (1 statement por
+// lote inteiro, nao 1 por linha) num pool de conexao isolado so pro sync — o problema que
+// motivou reduzir o lote deixou de existir. Lote maior = backlog grande (ex: loja nova synca
+// desde o começo) termina em muito menos ticks.
+const BATCH_SIZE = 1000;
 
 interface PushResult {
   persisted: number;
@@ -211,17 +209,14 @@ function syncReceivables(cfg: AgentConfig): Promise<number> {
   );
 }
 
-// DESLIGADO em 24/08 (incidente real): ITEVENDAS tem 652 mil linhas e MOV_OPERADORES 195 mil
-// (medido ao vivo no piloto). Mesmo no ritmo mais conservador (lote 200, concorrencia 2,
-// intervalo 90s) o backlog levaria DIAS pra terminar, e nesse meio tempo continuou
-// derrubando /api/reports/* do Tarcisio com P1001 "Can't reach database server" (pooler do
-// Supabase sem folga). Confirmado isolando a causa: com o agente TOTALMENTE parado, 9/9
-// chamadas de relatorio funcionaram; com ele sincronizando essas 2 tabelas, voltou a falhar.
-// Prioridade e a estabilidade do que ja esta em producao (sales/payables/receivables, que
-// nunca deram esse problema) sobre completar Curva ABC/Formas de Pagamento rapido. Precisa
-// de uma estrategia mais leve (ex: bulk insert em vez de upsert por linha, ou rodar so fora
-// do horario de uso) antes de religar — nao e so questao de esperar terminar.
-const SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED = false;
+// Religado em 25/08 (decisao D14, aprovada pelo dono): estava DESLIGADO desde 24/08 porque
+// ITEVENDAS (652 mil linhas) e MOV_OPERADORES (195 mil, piloto) derrubavam /api/reports/*
+// do dono com P1001 — nao era fila lenta, era literalmente 1 round-trip de rede POR LINHA
+// upsertada, competindo pelo mesmo connection_limit dos relatorios. Fix real (nao so
+// cosmetico de lote/intervalo): backend agora faz bulk upsert num pool de conexao isolado
+// (ver syncRoutes.ts + db/prisma.ts). Se voltar a dar problema, LIGAR ESSA FLAG DE VOLTA
+// PARA false e investigar antes de tentar de novo — nao ajustar so lote/concorrencia.
+const SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED = true;
 
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
   // Trava contra sobreposicao: setInterval dispara um novo tick mesmo se o anterior ainda
