@@ -96,7 +96,7 @@ export function TenantSelector(): JSX.Element | null {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg z-50">
+        <div className="absolute left-0 mt-1 w-72 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-xl shadow-lg z-50">
           <div className="p-2 border-b">
             <input
               autoFocus
