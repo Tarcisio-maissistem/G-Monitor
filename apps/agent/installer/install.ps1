@@ -52,8 +52,16 @@ if (Test-Path $exeSource) {
 }
 
 if (-not $Token -and -not $Cnpj) {
+  # Pergunta o CNPJ ANTES da autodeteccao (que varre o Firebird e demora). Quem sabe o CNPJ
+  # digita e pula a busca; quem nao sabe da Enter e cai na deteccao automatica. Pedido do dono
+  # 26/08: na J.Kastros a deteccao ficou consultando muito tempo sem nada na tela.
+  $typed = Read-Host "Digite o CNPJ da empresa e Enter (ou so Enter para eu tentar achar sozinho no GDOOR)"
+  if ($typed -and $typed.Trim() -ne '') { $Cnpj = $typed.Trim() }
+}
+
+if (-not $Token -and -not $Cnpj) {
   if (Test-Path $exePath) {
-    Write-Host "Nenhum CNPJ informado - tentando achar sozinho no banco do GDOOR..."
+    Write-Host "Nenhum CNPJ informado - tentando achar sozinho no banco do GDOOR (pode levar ~1 min)..."
     try {
       $detectJson = & $exePath --detect-cnpj --fdb-path $FdbPath --fb-user $FbUser --fb-password $FbPassword 2>$null
       $detected = $detectJson | ConvertFrom-Json
