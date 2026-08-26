@@ -45,8 +45,10 @@ async function syncSales(cfg: AgentConfig): Promise<number> {
   const rows = await pool.query<{
     source_id: number;
     sale_date: string;
+    sale_hour: number | null;
     customer_source_id: string | null;
     operator_name: string | null;
+    seller_name: string | null;
     caixa: string | null;
     modelo: string | null;
     natureza: string | null;
@@ -59,8 +61,12 @@ async function syncSales(cfg: AgentConfig): Promise<number> {
   const camelRows = rows.map((r) => ({
     sourceId: String(r.source_id),
     saleDate: new Date(r.sale_date).toISOString(),
+    // HORA_SAIDA -> saleHour (0-23). Vazio no GDOOR = null; nunca vira 0 (0 e meia-noite real).
+    saleHour: r['sale_hour'] == null ? null : Number(r['sale_hour']),
     customerSourceId: r['customer_source_id'] ? String(r['customer_source_id']) : null,
     operatorName: r['operator_name'] ?? null,
+    // VENDEDOR pode vir string vazia (64% preenchido) — normaliza pra null pra nao poluir o ranking.
+    sellerName: r['seller_name'] && String(r['seller_name']).trim() !== '' ? String(r['seller_name']).trim() : null,
     caixa: r['caixa'] ?? null,
     modelo: r['modelo'] ?? null,
     natureza: r['natureza'] ?? null,

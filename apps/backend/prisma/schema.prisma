@@ -242,7 +242,14 @@ model Sale {
   store       Store    @relation(fields: [storeId], references: [id])
   sourceId    String   // ID original no Firebird
   saleDate    DateTime
+  // Hora da venda (0-23) de VENDAS.HORA_SAIDA — 99,9% preenchida na prod. saleDate segue
+  // sendo so a data (DATE do GDOOR); a hora fica aqui pra nao mudar o significado dela nem
+  // quebrar os date_trunc('day') existentes. Alimenta o grafico de horario de pico.
+  saleHour    Int?
   customerSourceId String?
+  // VENDEDOR (quem vendeu) — DIFERENTE de operatorName, que e o OPERADOR do caixa. Decisao
+  // do dono 25/08: ranking e por vendedor, nao por caixa. 64% preenchido na prod.
+  sellerName  String?
   operatorName String?
   caixa       String?
   modelo      String?
