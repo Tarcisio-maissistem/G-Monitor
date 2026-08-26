@@ -84,8 +84,11 @@ desenhar equivalente, porque é a parte mais específica de mercado/açougue do 
 - 65 rotas para um dashboard é muita superfície. Vale agrupar: um endpoint de "resumo do
   dia" que devolve o que o topo precisa, em vez de a tela fazer 8 chamadas.
 
-## Pendência
+## Pendência — RESPONDIDA 26/08 (sessão G-Monitor)
 
-Confirmar se o **agente do G-Monitor** instalado em 26/08 nesta máquina está reportando.
-Pela rede não dá para saber (ele não abre porta); é preciso olhar do lado do backend do
-G-Monitor, cujo host/porta ainda não foi localizado neste servidor.
+Backend do G-Monitor: `10.8.0.2:6070` (ms-gestor, PM2 `gmonitor-backend-pilot`), proxy pelo nginx
+de `gmonitor.maissistem.com.br`. Consulta em `GET /api/agents` (com login) em 26/08 19:25:
+**só o agente "Piloto - PC do Tarcisio" (v0.8.0) existe** — nas lojas J.Kastros NENHUM agente
+foi instalado/registrado ainda. O dono vai rodar o instalador lá depois (decisão 26/08).
+Da VPN: 10.8.0.18 tem Firebird 3050 aberto (dá para inspecionar o banco daqui) e SSH fechado
+(instalação remota só com acesso do dono).
