@@ -11,7 +11,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
-    "package": "pkg dist/index.js --targets node22-win-x64 --output release/gmonitor-agent.exe && node scripts/write-latest.mjs"
+    "package": "pkg dist/index.js --targets node22-win-x64 --no-bytecode --public --public-packages \"*\" --output release/gmonitor-agent.exe && node scripts/write-latest.mjs"
   },
   "pkg": {
     "scripts": "dist/**/*.js",
