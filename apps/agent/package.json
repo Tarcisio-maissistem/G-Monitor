@@ -11,7 +11,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
-    "package": "pkg dist/index.js --targets node22-win-x64 --no-bytecode --public --public-packages \"*\" --output release/gmonitor-agent.exe && node scripts/write-latest.mjs"
+    "package": "esbuild dist/index.js --bundle --platform=node --format=cjs --target=node22 --outfile=release/agent.cjs --log-level=warning && pkg release/agent.cjs --targets node22-win-x64 --no-bytecode --public --public-packages \"*\" --output release/gmonitor-agent.exe && node scripts/write-latest.mjs"
   },
   "pkg": {
     "scripts": "dist/**/*.js",
@@ -31,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/ws": "^8.5.13",
-    "@yao-pkg/pkg": "^6.1.1"
+    "@yao-pkg/pkg": "^6.1.1",
+    "esbuild": "0.21.5"
   }
 }
