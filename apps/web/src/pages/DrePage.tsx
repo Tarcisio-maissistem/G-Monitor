@@ -53,7 +53,7 @@ export function DrePage(): JSX.Element {
 
       <QueryState query={q} empty={d && (receita?.value ?? 0) === 0 ? 'Nenhuma venda no período.' : undefined}>
         <KpiRow cols={2}>
-          <KpiCard label="Receita bruta" value={formatBRL(receita?.value ?? 0)} tone="blue" compact sub={periodLabel(range)} />
+          <KpiCard label="Receita bruta" info="Tudo que a loja vendeu no período (pré-vendas + NF-e), antes de qualquer desconto de custo ou despesa." value={formatBRL(receita?.value ?? 0)} tone="blue" compact sub={periodLabel(range)} />
           <KpiCard
             label="Resultado aproximado"
             value={formatCompactBRL(resultado?.value ?? 0)}

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export type KpiTone = 'default' | 'blue' | 'emerald' | 'red' | 'amber' | 'slate';
 
@@ -12,6 +12,9 @@ export interface KpiCardProps {
   highlight?: boolean; // card principal (borda azul + valor azul) — variante do Dashboard
   compact?: boolean; // padding/fonte menores pra caber 3 cards em 375px
   badge?: ReactNode; // selo no canto (ex: <DataStatusBadge status="estimate" />)
+  // Texto do ⓘ (pedido do dono 26/08): explica em 1-2 frases o que o numero significa e de
+  // onde vem. Abre por toque (celular nao tem hover) e fecha ao tocar fora.
+  info?: string;
   onClick?: () => void;
   className?: string;
 }
@@ -25,10 +28,48 @@ const TONE: Record<KpiTone, string> = {
   slate: 'text-slate-500',
 };
 
+// Icone ⓘ com balao. E um <span role="button"> (nao <button>) porque o card inteiro pode ser
+// um <button> quando tem onClick — button dentro de button e HTML invalido.
+function InfoHint({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent | TouchEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
+  }, [open]);
+  return (
+    <span ref={ref} className="relative shrink-0 inline-flex">
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label="O que é isso?"
+        aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setOpen((v) => !v); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v); } }}
+        className="w-4 h-4 rounded-full border border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 text-[10px] leading-none font-serif italic flex items-center justify-center cursor-help select-none"
+      >
+        i
+      </span>
+      {open && (
+        <span
+          role="tooltip"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 top-5 z-30 w-56 sm:w-64 rounded-lg bg-slate-800 text-slate-50 text-xs font-normal normal-case tracking-normal leading-snug p-2.5 shadow-lg whitespace-normal"
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Unifica as 6 variantes de KPI que existiam (Kpi x9, KpiCard accent, KpiCard subtext,
 // KpiCard highlight, Card/CmpCard, SummaryChip): bg-white rounded shadow / label xs
 // uppercase / valor bold. Mobile-first: text-xl em 375px, text-2xl a partir de sm.
-export function KpiCard({ label, value, tone = 'default', sub, highlight, compact, badge, onClick, className = '' }: KpiCardProps): JSX.Element {
+export function KpiCard({ label, value, tone = 'default', sub, highlight, compact, badge, info, onClick, className = '' }: KpiCardProps): JSX.Element {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
@@ -37,9 +78,12 @@ export function KpiCard({ label, value, tone = 'default', sub, highlight, compac
         highlight ? 'border border-blue-200 ring-1 ring-blue-100' : ''
       } ${onClick ? 'hover:shadow-md transition cursor-pointer' : ''} ${className}`}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-1.5">
         <div className="text-[11px] sm:text-xs uppercase tracking-wide text-slate-500 truncate">{label}</div>
-        {badge && <div className="shrink-0">{badge}</div>}
+        <div className="flex items-center gap-1 shrink-0">
+          {badge}
+          {info && <InfoHint text={info} />}
+        </div>
       </div>
       <div className={`font-bold mt-1 break-words ${compact ? 'text-lg' : 'text-xl sm:text-2xl'} ${highlight ? 'text-blue-700' : TONE[tone]}`}>
         {value}

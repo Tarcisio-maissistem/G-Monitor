@@ -33,9 +33,9 @@ export function ConferenciaCaixaPage(): JSX.Element {
 
       <QueryState query={q} empty={rows.length === 0 ? 'Nenhum fechamento de caixa sincronizado no período (precisa do agente v0.8 na loja).' : undefined}>
         <KpiRow cols={3}>
-          <KpiCard label="Esperado" value={formatBRL(tot?.esperado ?? 0)} compact sub="registrado no expediente" />
-          <KpiCard label="Contado" value={formatBRL(tot?.contado ?? 0)} compact sub="informado no fechamento" />
-          <KpiCard label="Quebra" value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.fechamentosComQuebra ?? 0} de ${rows.length} caixas com diferença`} />
+          <KpiCard label="Esperado" info="O que o sistema registrou durante o expediente: vendas por forma de pagamento + fundo de troco + suprimentos − sangrias. É a verdade do GDOOR." value={formatBRL(tot?.esperado ?? 0)} compact sub="registrado no expediente" />
+          <KpiCard label="Contado" info="O que o operador informou ter contado na gaveta ao fechar o caixa (por forma de pagamento)." value={formatBRL(tot?.contado ?? 0)} compact sub="informado no fechamento" />
+          <KpiCard label="Quebra" info="Contado − Esperado. Negativo = faltou dinheiro (vermelho); positivo = sobrou. A quebra não muda o faturamento, só sinaliza o que conferir com o operador." value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.fechamentosComQuebra ?? 0} de ${rows.length} caixas com diferença`} />
         </KpiRow>
 
         <CardList<CashConferenceClosing>
