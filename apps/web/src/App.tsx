@@ -21,6 +21,8 @@ import { EstoqueAlertasPage } from './pages/EstoqueAlertasPage';
 import { SugestaoComprasPage } from './pages/SugestaoComprasPage';
 import { FechamentoMensalPage } from './pages/FechamentoMensalPage';
 import { RelatoriosPage } from './pages/RelatoriosPage';
+import { FluxoCaixaPage } from './pages/FluxoCaixaPage';
+import { DrePage } from './pages/DrePage';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -94,6 +96,8 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/sugestao-compras') return <SugestaoComprasPage />;
   if (path === '/fechamento') return <FechamentoMensalPage />;
   if (path === '/relatorios') return <RelatoriosPage />;
+  if (path === '/fluxo-caixa') return <FluxoCaixaPage />;
+  if (path === '/dre') return <DrePage />;
 
   // Empresas: console de gestao cross-tenant, so pra super-admin.
   if (path === '/empresas') return isSuperAdmin ? <EmpresasPage /> : <ComingSoon label="Empresas" />;
