@@ -141,15 +141,29 @@ if (-not $nssm -and -not (Test-Path "$installDir\nssm.exe")) {
 }
 if ($nssm) {
   $n = if ($nssm.Source) { $nssm.Source } else { $nssm }
-  & $n stop GMonitorAgent 2>$null | Out-Null
-  & $n remove GMonitorAgent confirm 2>$null | Out-Null
-  & $n install GMonitorAgent "$installDir\gmonitor-agent.exe" | Out-Null
-  & $n set GMonitorAgent AppDirectory $installDir | Out-Null
-  & $n set GMonitorAgent AppExit Default Restart | Out-Null
-  & $n set GMonitorAgent AppRestartDelay 5000 | Out-Null
-  & $n set GMonitorAgent Start SERVICE_AUTO_START | Out-Null
-  & $n start GMonitorAgent | Out-Null
-  Write-Host "Servico GMonitorAgent instalado e iniciado (auto-update ligado)."
+  # nssm escreve em stderr e retorna != 0 ("Can't open service!") quando o servico ainda nao
+  # existe (1a instalacao). Com ErrorActionPreference=Stop isso ABORTAVA antes do install e o
+  # servico nunca subia (visto na J.Kastros 26/08). So limpa se ja existir; e afrouxa o modo
+  # estrito nas chamadas do nssm, que sao ruidosas por natureza.
+  $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  if (Get-Service -Name GMonitorAgent -ErrorAction SilentlyContinue) {
+    & $n stop GMonitorAgent 2>&1 | Out-Null
+    & $n remove GMonitorAgent confirm 2>&1 | Out-Null
+  }
+  & $n install GMonitorAgent "$installDir\gmonitor-agent.exe" 2>&1 | Out-Null
+  & $n set GMonitorAgent AppDirectory $installDir 2>&1 | Out-Null
+  & $n set GMonitorAgent AppExit Default Restart 2>&1 | Out-Null
+  & $n set GMonitorAgent AppRestartDelay 5000 2>&1 | Out-Null
+  & $n set GMonitorAgent Start SERVICE_AUTO_START 2>&1 | Out-Null
+  & $n start GMonitorAgent 2>&1 | Out-Null
+  $ErrorActionPreference = $prevEap
+  Start-Sleep -Seconds 2
+  $svc = Get-Service -Name GMonitorAgent -ErrorAction SilentlyContinue
+  if ($svc -and $svc.Status -eq 'Running') {
+    Write-Host "Servico GMonitorAgent instalado e RODANDO (auto-update ligado)."
+  } else {
+    Write-Host "Servico GMonitorAgent instalado. Status atual: $($svc.Status). Se nao estiver Running, rode: $n start GMonitorAgent"
+  }
 } else {
   Write-Host "nssm nao encontrado. Baixe em nssm.cc, coloque nssm.exe ao lado deste script e rode de novo - ou rode na mao:"
   Write-Host "  nssm install GMonitorAgent `"$installDir\gmonitor-agent.exe`""
