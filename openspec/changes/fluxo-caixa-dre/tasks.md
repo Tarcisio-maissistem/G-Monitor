@@ -44,3 +44,16 @@ Marcar `[x]` à medida que implementa. Cada item de código só fecha com prova 
 - [x] Release note: Caixa Detalhado mudou de número — avisado ao dono antes do OK
 - [ ] `graphify update` — ADIADO (economia)
 - [x] Memória atualizada
+
+## D20 — Conferência de Caixa + P4/P5 (26/08) — EM PROD (PR #47)
+- [x] P4 SALE_OF_RECORD (PV+55; NFC-e 65 fora, exceto direta com pagamento) em todos os relatórios
+- [x] P5 Payment.kind (sangria/suprimento/recebimento/venda) — agente + backend + fluxo de caixa
+- [x] CashClosing(+pdv, openingAmount) + CashClosingSpecies; syncs no agente v0.8.0; migrations aplicadas
+- [x] GET /api/reports/cash-conference + tela /conferencia-caixa (mobile-first)
+- [x] Dashboard: alerta "NFC-e sem pré-venda"
+- [ ] Instalar agente v0.8.0 no PC do dono + lojas J.Kastros; re-sync do histórico (checkpoints) pra popular saleHour/sellerName/kind/fechamentos
+- [ ] Validar conferência contra loja real (banco do dono tem fechamentos zerados)
+- [x] Ranking de vendedores: ticket médio + variação vs período anterior + UPPER(TRIM) (PR #49)
+- [x] Inadimplentes + aging + % fiado + saldo projetado no dashboard — /dashboard/financial-position (PR #49)
+- [ ] KG / clientes com nome / dias sem comprar — exigem sync de ESTOQUE (UND) e CLIENTES (adiado pelo dono)
+- [x] Auto-update do agente: updater lê /downloads/latest.json (gerado no `pnpm package`), NSSM AppExit=Restart no install.ps1, versão no painel (PR #49)

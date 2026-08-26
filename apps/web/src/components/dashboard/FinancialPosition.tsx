@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { formatBRL, formatInt, formatPct, formatBrDate } from '../../lib/masks';
+import { formatBRL, formatCompactBRL, formatInt, formatPct, formatBrDate } from '../../lib/masks';
 import type { FinancialPositionResponse, FinancialSide } from '../../lib/reports';
 import { KpiRow, KpiCard, QueryState } from '../ui';
 
@@ -19,8 +19,8 @@ export function FinancialPosition({ from, to }: { from: string; to: string }): J
         {d && (
           <>
             <KpiRow cols={2}>
-              <KpiCard label={`Saldo projetado até ${formatBrDate(d.saldoProjetado.ate)}`} value={formatBRL(saldo)} tone={saldo >= 0 ? 'emerald' : 'red'} highlight sub={`a receber ${formatBRL(d.saldoProjetado.entradas)} − a pagar ${formatBRL(d.saldoProjetado.saidas)}`} />
-              <KpiCard label="Vendido a prazo (fiado)" value={formatPct(d.fiado.pct, 1)} tone={d.fiado.pct > 30 ? 'amber' : 'default'} sub={`${formatBRL(d.fiado.valor)} de ${formatBRL(d.fiado.totalPagamentos)} recebidos`} />
+              <KpiCard label={`Saldo projetado até ${formatBrDate(d.saldoProjetado.ate)}`} value={formatCompactBRL(saldo)} tone={saldo >= 0 ? 'emerald' : 'red'} highlight sub={`${formatBRL(saldo)} · a receber ${formatCompactBRL(d.saldoProjetado.entradas)} − a pagar ${formatCompactBRL(d.saldoProjetado.saidas)}`} />
+              <KpiCard label="Vendido a prazo (fiado)" value={formatPct(d.fiado.pct, 1)} tone={d.fiado.pct > 30 ? 'amber' : 'default'} sub={`${formatCompactBRL(d.fiado.valor)} de ${formatCompactBRL(d.fiado.totalPagamentos)} recebidos`} />
             </KpiRow>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Lado titulo="A receber" s={d.receber} tone="emerald" />
@@ -57,11 +57,11 @@ function Lado({ titulo, s, tone }: { titulo: string; s: FinancialSide; tone: 'em
       </div>
       <div className="flex justify-between text-slate-600"><span>A vencer até o fim do mês</span><span>{formatBRL(s.aVencerMes)}</span></div>
       <div className="flex justify-between text-slate-600"><span>Em atraso (total)</span><span className={s.atrasadoTotal > 0 ? 'text-red-700 font-medium' : ''}>{formatBRL(s.atrasadoTotal)}</span></div>
-      <div className="mt-2 grid grid-cols-4 gap-1 text-[11px] text-center">
+      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1 text-[11px] text-center">
         {s.aging.map((a) => (
           <div key={a.faixa} className="bg-slate-50 rounded p-1.5">
             <div className="text-slate-400">{FAIXA[a.faixa]}</div>
-            <div className="font-medium text-slate-700">{formatBRL(a.valor)}</div>
+            <div className="font-medium text-slate-700">{formatCompactBRL(a.valor)}</div>
             <div className="text-slate-400">{formatInt(a.qtd)}</div>
           </div>
         ))}
