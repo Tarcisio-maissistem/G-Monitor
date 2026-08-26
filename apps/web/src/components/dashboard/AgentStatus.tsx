@@ -1,5 +1,5 @@
-import { useQueryClient, useIsFetching } from '@tanstack/react-query';
-import type { FreshnessMeta } from '../../lib/reports';
+import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query';
+import type { FreshnessMeta, AgentManifest } from '../../lib/reports';
 import { Spinner } from '../Spinner';
 
 // Barra de status do agente no topo do dashboard (pedido do dono 26/08): em vez do alerta
@@ -9,6 +9,12 @@ import { Spinner } from '../Spinner';
 export function AgentStatus({ meta }: { meta?: FreshnessMeta | null | undefined }): JSX.Element {
   const qc = useQueryClient();
   const fetching = useIsFetching() > 0;
+  // versao publicada (manifesto estatico no mesmo host) x versao que o agente reportou no sync
+  const manifest = useQuery({ queryKey: ['agent-manifest'], queryFn: async () => (await fetch('/downloads/latest.json', { cache: 'no-store' })).json() as Promise<AgentManifest>, staleTime: 10 * 60_000, retry: 0 });
+  const latest = manifest.data?.version ?? null;
+  const atual = meta?.agentVersion ?? null;
+  const cmp = (a: string, b: string) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] ?? 0) - (pb[i] ?? 0); if (d) return d; } return 0; };
+  const desatualizado = !!(latest && atual && cmp(latest, atual) > 0);
 
   const last = meta?.lastSyncedAt ? new Date(meta.lastSyncedAt) : null;
   const staleSec = meta?.stalenessSeconds ?? null;
@@ -33,6 +39,13 @@ export function AgentStatus({ meta }: { meta?: FreshnessMeta | null | undefined 
         <span className="text-slate-800 font-medium">{quando}</span>
         {relativo && <span className="text-slate-400"> · {relativo}</span>}
         {offline && <span className="text-amber-700"> · agente offline</span>}
+        {atual && (
+          <div className="text-xs text-slate-400">
+            agente v{atual}
+            {desatualizado && <span className="text-amber-700"> · v{latest} disponível — atualiza sozinho em até 1h (se o serviço estiver rodando)</span>}
+            {!desatualizado && latest && <span> · atualizado</span>}
+          </div>
+        )}
       </div>
       <button
         onClick={atualizar}

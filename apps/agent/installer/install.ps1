@@ -107,5 +107,29 @@ $config = @{
 Set-Content -Path "$dataDir\agent.json" -Value $config -Encoding utf8
 
 Write-Host "Configuracao salva em $dataDir\agent.json"
-Write-Host "Para iniciar o servico: nssm install GMonitorAgent `"$installDir\gmonitor-agent.exe`""
-Write-Host "Depois: nssm start GMonitorAgent"
+
+# Servico Windows via NSSM. AppExit=Restart + 5s e o que permite o AUTO-UPDATE: o agente baixa
+# a versao nova, troca o .exe por um .bat e sai — o NSSM sobe de novo ja com a versao nova.
+$nssm = Get-Command nssm -ErrorAction SilentlyContinue
+if (-not $nssm) {
+  $local = Join-Path $PSScriptRoot "nssm.exe"
+  if (Test-Path $local) { Copy-Item $local "$installDir\nssm.exe" -Force; $nssm = "$installDir\nssm.exe" }
+}
+if ($nssm) {
+  $n = if ($nssm.Source) { $nssm.Source } else { $nssm }
+  & $n stop GMonitorAgent 2>$null | Out-Null
+  & $n remove GMonitorAgent confirm 2>$null | Out-Null
+  & $n install GMonitorAgent "$installDir\gmonitor-agent.exe" | Out-Null
+  & $n set GMonitorAgent AppDirectory $installDir | Out-Null
+  & $n set GMonitorAgent AppExit Default Restart | Out-Null
+  & $n set GMonitorAgent AppRestartDelay 5000 | Out-Null
+  & $n set GMonitorAgent Start SERVICE_AUTO_START | Out-Null
+  & $n start GMonitorAgent | Out-Null
+  Write-Host "Servico GMonitorAgent instalado e iniciado (auto-update ligado)."
+} else {
+  Write-Host "nssm nao encontrado. Baixe em nssm.cc, coloque nssm.exe ao lado deste script e rode de novo — ou rode na mao:"
+  Write-Host "  nssm install GMonitorAgent `"$installDir\gmonitor-agent.exe`""
+  Write-Host "  nssm set GMonitorAgent AppExit Default Restart"
+  Write-Host "  nssm set GMonitorAgent AppRestartDelay 5000"
+  Write-Host "  nssm start GMonitorAgent"
+}

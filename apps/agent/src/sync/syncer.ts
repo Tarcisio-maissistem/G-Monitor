@@ -4,6 +4,7 @@ import { getCheckpoint, setCheckpoint } from './checkpoint.js';
 import { resolveReport } from '../catalog/index.js';
 import { detectFinancialSchema } from '../firebird/schemaDetect.js';
 import { logger } from '../logger.js';
+import { AGENT_VERSION } from '../version.js';
 
 // Loop de sincronizacao incremental.
 // Le pelo catalogo (sync-sales-batch etc), empurra ao SaaS via HTTP POST.
@@ -27,6 +28,8 @@ async function postBatch(cfg: AgentConfig, table: string, rows: unknown[], check
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cfg.token}`,
+      // backend grava em Agent.agentVersion — o painel mostra "v0.8.0 · nova versao disponivel"
+      'x-agent-version': AGENT_VERSION,
     },
     body: JSON.stringify({ table, rows, checkpoint }),
   });

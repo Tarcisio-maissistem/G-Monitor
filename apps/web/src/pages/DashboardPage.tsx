@@ -12,6 +12,7 @@ import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
 import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart';
 import { PeakHoursChart } from '../components/dashboard/PeakHoursChart';
 import { SellerRanking } from '../components/dashboard/SellerRanking';
+import { FinancialPosition } from '../components/dashboard/FinancialPosition';
 
 interface SalesSummary {
   data: { quantity: number; total: number; ticket: number; workingDays: number; uniqueCustomers: number };
@@ -91,6 +92,9 @@ export function DashboardPage(): JSX.Element {
           <KpiCard label="Clientes únicos" value={formatInt(s.uniqueCustomers)} compact />
         </KpiRow>
       )}
+
+      {/* Financeiro com previsibilidade (Parte 3 do doc do dono) */}
+      <FinancialPosition from={from} to={to} />
 
       <RevenueYoYChart />
 
