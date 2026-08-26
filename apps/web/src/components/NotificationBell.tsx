@@ -18,7 +18,9 @@ interface NotificationItem {
   tenant?: { name: string; pendingApproval: boolean } | null;
 }
 
-export function NotificationBell(): JSX.Element {
+// align = lado em que o dropdown abre. 'right' quando o sino esta no canto direito da
+// top bar do celular (w-80 alinhado a esquerda sairia da tela de 375px).
+export function NotificationBell({ align = 'left' }: { align?: 'left' | 'right' } = {}): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -71,7 +73,7 @@ export function NotificationBell(): JSX.Element {
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-1 w-80 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-xl shadow-lg z-50 text-slate-800">
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} mt-1 w-80 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-xl shadow-lg z-50 text-slate-800`}>
           <div className="px-4 py-2.5 border-b font-semibold text-sm">Notificações</div>
           <div className="max-h-80 overflow-y-auto">
             {r.isLoading && (
