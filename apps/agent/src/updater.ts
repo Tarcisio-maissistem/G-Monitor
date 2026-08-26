@@ -6,8 +6,9 @@ import { AGENT_VERSION } from './version.js';
 import { logger } from './logger.js';
 import type { AgentConfig } from './config.js';
 
-// Manifesto disponivel em `${saasUrl}/agent-updates/latest.json` (servido pelo
-// servidor de downloads). Contem versao + hash + URL do binario novo.
+// Manifesto em `${saasUrl}/downloads/latest.json` — mesmo lugar do instalador (nginx serve
+// apps/web/dist/downloads). Gerado por apps/agent/scripts/write-latest.mjs a cada `pnpm package`.
+// Contem versao + sha256 + URL do binario novo. (Antes apontava pra host:8088 que nunca existiu.)
 interface UpdateManifest {
   version: string;
   sha256: string;
@@ -32,11 +33,7 @@ function compareVersions(a: string, b: string): number {
 async function fetchManifest(cfg: AgentConfig): Promise<UpdateManifest | null> {
   try {
     const baseUrl = cfg.saasUrl.replace(/\/$/, '');
-    // O servidor de downloads costuma estar na mesma maquina, em outra porta.
-    // Tenta primeiro o mesmo host:8088 (convencao do instalador), senao o saasUrl.
-    const host = new URL(baseUrl).hostname;
-    const url = `http://${host}:8088/latest.json`;
-    const res = await fetch(url);
+    const res = await fetch(`${baseUrl}/downloads/latest.json`, { headers: { 'cache-control': 'no-cache' } });
     if (!res.ok) return null;
     return (await res.json()) as UpdateManifest;
   } catch (err) {
@@ -107,7 +104,7 @@ async function checkAndApply(cfg: AgentConfig): Promise<void> {
 }
 
 export function startUpdaterLoop(cfg: AgentConfig): NodeJS.Timeout {
-  // primeiro check em 5min apos start (deixa o agente estabilizar primeiro)
-  setTimeout(() => void checkAndApply(cfg), 5 * 60 * 1000);
+  // primeiro check 1 min apos start (o dono quer atualizar assim que houver versao nova)
+  setTimeout(() => void checkAndApply(cfg), 60 * 1000);
   return setInterval(() => void checkAndApply(cfg), CHECK_INTERVAL_MS);
 }

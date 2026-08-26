@@ -7,6 +7,7 @@ export interface FreshnessMeta {
   lastSyncedAt: string | null;
   stalenessSeconds: number | null;
   agentsOffline: string[];
+  agentVersion?: string | null; // menor versao entre os agentes da loja (26/08)
 }
 
 // Selo de honestidade por linha/KPI (P3: liberar com selo visivel, nunca zero escondendo dado).
@@ -203,5 +204,24 @@ export interface CashConferenceResponse {
   totals: { esperado: number; contado: number; quebra: number };
   fechamentosComQuebra: number;
   avisos: string[];
+  meta: FreshnessMeta;
+}
+
+// ---------- /downloads/latest.json (manifesto do agente, estatico no nginx) ----------
+export interface AgentManifest { version: string; sha256: string; url: string; releasedAt?: string }
+
+// ---------- GET /api/reports/dashboard/seller-ranking (26/08: + periodo anterior) ----------
+export interface SellerRow2 extends SellerRow { totalAnterior: number; variacaoPct: number | null }
+
+// ---------- GET /api/reports/dashboard/financial-position (26/08) ----------
+export interface AgingBucket { faixa: 'a_vencer' | 'ate_30' | '31_60' | 'acima_60'; qtd: number; valor: number }
+export interface FinancialSide { realizadoMes: { qtd: number; valor: number }; aVencerMes: number; aging: AgingBucket[]; atrasadoTotal: number }
+export interface Inadimplente { nome: string; titulos: number; saldo: number; diasAtrasoMaior: number; ultimoVencimento: string }
+export interface FinancialPositionResponse {
+  receber: FinancialSide;
+  pagar: FinancialSide;
+  inadimplentes: Inadimplente[];
+  fiado: { valor: number; pct: number; totalPagamentos: number }; // % do recebido em crediário/fiado no período
+  saldoProjetado: { entradas: number; saidas: number; saldo: number; ate: string }; // até o fim do mês
   meta: FreshnessMeta;
 }

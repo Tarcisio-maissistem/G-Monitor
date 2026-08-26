@@ -341,7 +341,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
-    await prisma.agent.update({ where: { id: ctx.agentId }, data: { lastSeenAt: new Date() } });
+    const agentVersion = typeof req.headers['x-agent-version'] === 'string' ? req.headers['x-agent-version'].slice(0, 32) : undefined;
+    await prisma.agent.update({ where: { id: ctx.agentId }, data: { lastSeenAt: new Date(), ...(agentVersion ? { agentVersion } : {}) } });
 
     return { persisted };
   });

@@ -1293,35 +1293,99 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     return { data, dias: query.days, picoHora: comHora > 0 ? pico.hora : null, semDado: comHora === 0 };
   }));
 
-  // Ranking por VENDEDOR (sellerName, != operador de caixa) — pedido do dono 25/08.
+  // Ranking por VENDEDOR (sellerName, != operador de caixa) — pedido do dono 25/08. 26/08:
+  // agrupa por UPPER(TRIM()) (texto livre no GDOOR — variacao de digitacao duplicava linha),
+  // ordena por VALOR (nunca por qtd), ticket medio e variacao vs periodo anterior de mesmo tamanho.
   app.get('/api/reports/dashboard/seller-ranking', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('seller-ranking', async (req) => {
     const query = z.object({ from: z.string().date().optional(), to: z.string().date().optional(), storeId: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(20) }).parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
+    const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86_400_000);
+    const scopeSql = storeId ? Prisma.sql`AND "storeId" = ${storeId}` : Prisma.empty;
 
-    const groups = await prisma.sale.groupBy({
-      by: ['sellerName'],
-      where: { tenantId: req.user!.tenantId, ...SALE_OF_RECORD, sellerName: { not: null }, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
-      _sum: { totalValue: true },
-      _count: true,
-      orderBy: { _sum: { totalValue: 'desc' } },
-      take: query.limit,
-    });
-    const grandTotal = groups.reduce((s, g) => s + Number(g._sum.totalValue ?? 0), 0);
-    // total de venda no periodo (com E sem vendedor) — pra mostrar quanto do faturamento
-    // tem vendedor identificado (VENDEDOR e 64% preenchido na prod).
+    const rows = await prisma.$queryRaw<{ seller: string; vendas: bigint; total: unknown; total_ant: unknown; total_geral: unknown }[]>(Prisma.sql`
+      WITH base AS (
+        SELECT UPPER(TRIM("sellerName")) AS seller,
+               COUNT(*) FILTER (WHERE "saleDate" >= ${from}) AS vendas,
+               COALESCE(SUM("totalValue") FILTER (WHERE "saleDate" >= ${from}), 0) AS total,
+               COALESCE(SUM("totalValue") FILTER (WHERE "saleDate" < ${from}), 0) AS total_ant
+        FROM sales
+        WHERE "tenantId" = ${req.user!.tenantId} ${scopeSql}
+          AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')
+          AND "sellerName" IS NOT NULL AND TRIM("sellerName") <> ''
+          AND "saleDate" >= ${prevFrom} AND "saleDate" <= ${to}
+        GROUP BY 1
+      )
+      SELECT seller, vendas, total, total_ant, SUM(total) OVER () AS total_geral
+      FROM base WHERE vendas > 0 OR total_ant > 0
+      ORDER BY total DESC LIMIT ${query.limit}`);
     const totalPeriodo = await prisma.sale.aggregate({ where: { tenantId: req.user!.tenantId, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) }, _sum: { totalValue: true } });
-    const comVendedor = grandTotal;
+    const grand = Number(rows[0]?.total_geral ?? 0);
     const totalGeral = Number(totalPeriodo._sum.totalValue ?? 0);
     return {
-      data: groups.map((g) => ({
-        seller: g.sellerName,
-        vendas: g._count,
-        total: Number(g._sum.totalValue ?? 0),
-        ticket: g._count > 0 ? Number(g._sum.totalValue ?? 0) / g._count : 0,
-        pct: grandTotal > 0 ? Number(g._sum.totalValue ?? 0) / grandTotal : 0,
-      })),
-      cobertura: totalGeral > 0 ? comVendedor / totalGeral : 0,
+      data: rows.map((r) => {
+        const total = Number(r.total), ant = Number(r.total_ant), vendas = Number(r.vendas);
+        return { seller: r.seller, vendas, total, totalAnterior: ant, ticket: vendas > 0 ? total / vendas : 0, pct: grand > 0 ? total / grand : 0, variacaoPct: ant > 0 ? ((total - ant) / ant) * 100 : null };
+      }),
+      cobertura: totalGeral > 0 ? grand / totalGeral : 0,
+      periodoAnterior: { from: prevFrom.toISOString().slice(0, 10), to: prevTo.toISOString().slice(0, 10) },
+    };
+  }));
+
+  // Posicao financeira (doc do dono, Parte 3): aging de receber/pagar, realizado no mes,
+  // maiores devedores, % fiado e saldo projetado ate o fim do mes.
+  app.get('/api/reports/dashboard/financial-position', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('financial-position', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+    const scope = { tenantId, ...(storeId ? { storeId } : {}) };
+    const hoje = new Date(); hoje.setUTCHours(0, 0, 0, 0);
+    const fimMes = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1, 0, 23, 59, 59));
+    const diasAteFim = Math.max(1, Math.ceil((fimMes.getTime() - hoje.getTime()) / 86_400_000));
+    const scopeSql = (a: string) => storeId ? Prisma.sql`AND ${Prisma.raw(a)}."storeId" = ${storeId}` : Prisma.empty;
+    const agingSql = (table: 'receivables' | 'payables', settled: 'receivedValue' | 'paidValue') => Prisma.sql`
+      SELECT CASE WHEN "dueDate" >= ${hoje} THEN 'a_vencer'
+                  WHEN ${hoje}::date - "dueDate"::date <= 30 THEN 'ate_30'
+                  WHEN ${hoje}::date - "dueDate"::date <= 60 THEN '31_60' ELSE 'acima_60' END AS faixa,
+             COUNT(*) AS qtd, COALESCE(SUM("value" - ${Prisma.raw(`"${settled}"`)}), 0) AS valor,
+             COALESCE(SUM("value" - ${Prisma.raw(`"${settled}"`)}) FILTER (WHERE "dueDate" >= ${hoje} AND "dueDate" <= ${fimMes}), 0) AS a_vencer_mes
+      FROM ${Prisma.raw(table)} t
+      WHERE t."tenantId" = ${tenantId} ${scopeSql('t')} AND t."cancelled" = false AND t."value" > ${Prisma.raw(`t."${settled}"`)}
+      GROUP BY 1`;
+    type AgingRow = { faixa: string; qtd: bigint; valor: unknown; a_vencer_mes: unknown };
+    const [agR, agP, recMes, pagMes, inad, payGroups, forecast, meta] = await Promise.all([
+      prisma.$queryRaw<AgingRow[]>(agingSql('receivables', 'receivedValue')),
+      prisma.$queryRaw<AgingRow[]>(agingSql('payables', 'paidValue')),
+      prisma.receivable.aggregate({ where: { ...scope, cancelled: false, receivedValue: { gt: 0 }, receivedDate: { gte: from, lte: to } }, _sum: { receivedValue: true }, _count: true }),
+      prisma.payable.aggregate({ where: { ...scope, cancelled: false, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, _sum: { paidValue: true }, _count: true }),
+      prisma.$queryRaw<{ nome: string | null; titulos: bigint; saldo: unknown; dias: number; ultimo: Date }[]>(Prisma.sql`
+        SELECT COALESCE(NULLIF(TRIM("counterparty"), ''), '(sem nome)') AS nome, COUNT(*) AS titulos,
+               COALESCE(SUM("value" - "receivedValue"), 0) AS saldo,
+               (${hoje}::date - MIN("dueDate")::date) AS dias, MAX("dueDate") AS ultimo
+        FROM receivables r WHERE r."tenantId" = ${tenantId} ${scopeSql('r')} AND r."cancelled" = false
+          AND r."value" > r."receivedValue" AND r."dueDate" < ${hoje}
+        GROUP BY 1 ORDER BY saldo DESC LIMIT 20`),
+      prisma.payment.groupBy({ by: ['paymentType'], where: { ...scope, paymentDate: { gte: from, lte: to }, OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }] }, _sum: { value: true } }),
+      buildForecast(tenantId, storeId, diasAteFim),
+      getFreshnessMeta(tenantId, storeId),
+    ]);
+    const side = (rows: AgingRow[], realizado: { qtd: number; valor: number }) => {
+      const faixas = ['a_vencer', 'ate_30', '31_60', 'acima_60'] as const;
+      const aging = faixas.map((f) => { const r = rows.find((x) => x.faixa === f); return { faixa: f, qtd: r ? Number(r.qtd) : 0, valor: r ? Number(r.valor) : 0 }; });
+      return { realizadoMes: realizado, aVencerMes: rows.reduce((s, r) => s + Number(r.a_vencer_mes), 0), aging, atrasadoTotal: aging.filter((a) => a.faixa !== 'a_vencer').reduce((s, a) => s + a.valor, 0) };
+    };
+    const totalPag = payGroups.reduce((s, g) => s + Number(g._sum.value ?? 0), 0);
+    const fiadoValor = payGroups.filter((g) => normalizePaymentType(g.paymentType) === 'crediario').reduce((s, g) => s + Number(g._sum.value ?? 0), 0);
+    return {
+      receber: side(agR, { qtd: recMes._count, valor: Number(recMes._sum.receivedValue ?? 0) }),
+      pagar: side(agP, { qtd: pagMes._count, valor: Number(pagMes._sum.paidValue ?? 0) }),
+      inadimplentes: inad.map((i) => ({ nome: i.nome ?? '(sem nome)', titulos: Number(i.titulos), saldo: Number(i.saldo), diasAtrasoMaior: Number(i.dias), ultimoVencimento: i.ultimo.toISOString().slice(0, 10) })),
+      fiado: { valor: fiadoValor, pct: totalPag > 0 ? (fiadoValor / totalPag) * 100 : 0, totalPagamentos: totalPag },
+      saldoProjetado: { ...forecast.totals, ate: fimMes.toISOString().slice(0, 10) },
+      meta,
     };
   }));
 
@@ -1639,6 +1703,7 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
   lastSyncedAt: string | null;
   stalenessSeconds: number | null;
   agentsOffline: string[];
+  agentVersion: string | null;
 }> {
   // "Frescor" usa o heartbeat do agente (Agent.lastSeenAt), nao SyncState.lastSyncedAt.
   // SyncState so atualiza quando ha linha NOVA pra persistir — uma tabela que ja pegou
@@ -1649,8 +1714,9 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
   // 24/08: alerta de "939 min de defasagem" com o agente sincronizando ha segundos).
   const agents = await prisma.agent.findMany({
     where: { tenantId, revokedAt: null, ...(storeId ? { storeId } : {}) },
-    select: { storeId: true, lastSeenAt: true },
+    select: { storeId: true, lastSeenAt: true, agentVersion: true },
   });
+  const agentVersion = agents.map((a) => a.agentVersion).filter((v): v is string => !!v).sort()[0] ?? null;
   const mostRecentSeen = agents.reduce<Date | null>(
     (acc, a) => (a.lastSeenAt && (!acc || a.lastSeenAt > acc) ? a.lastSeenAt : acc),
     null,
@@ -1660,5 +1726,6 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
     lastSyncedAt: mostRecentSeen?.toISOString() ?? null,
     stalenessSeconds: mostRecentSeen ? Math.round((Date.now() - mostRecentSeen.getTime()) / 1000) : null,
     agentsOffline: offline.map((a) => a.storeId),
+    agentVersion,
   };
 }
