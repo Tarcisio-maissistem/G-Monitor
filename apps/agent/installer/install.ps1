@@ -129,14 +129,21 @@ if (-not $nssm) {
   $local = Join-Path $PSScriptRoot "nssm.exe"
   if (Test-Path $local) { Copy-Item $local "$installDir\nssm.exe" -Force; $nssm = "$installDir\nssm.exe" }
 }
-# Sem nssm ao lado: baixa do proprio servidor (o release-sync publica nssm.exe em /downloads).
-if (-not $nssm -and -not (Test-Path "$installDir\nssm.exe")) {
-  try {
-    Write-Host "Baixando nssm.exe de $SaasUrl ..."
-    Invoke-WebRequest -Uri "$SaasUrl/downloads/nssm.exe" -OutFile "$installDir\nssm.exe"
+# Sem nssm no PATH nem ao lado do script: usa o que ja esta no installDir (de uma tentativa
+# anterior) ou baixa do proprio servidor. BUG corrigido 26/08: quando o nssm.exe JA existia em
+# installDir mas nao no PATH, o guard antigo pulava o download E nao setava $nssm - caia no
+# "nssm nao encontrado" com o arquivo ali do lado.
+if (-not $nssm) {
+  if (Test-Path "$installDir\nssm.exe") {
     $nssm = "$installDir\nssm.exe"
-  } catch {
-    $nssm = $null
+  } else {
+    try {
+      Write-Host "Baixando nssm.exe de $SaasUrl ..."
+      Invoke-WebRequest -Uri "$SaasUrl/downloads/nssm.exe" -OutFile "$installDir\nssm.exe"
+      $nssm = "$installDir\nssm.exe"
+    } catch {
+      $nssm = $null
+    }
   }
 }
 if ($nssm) {
