@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { formatBRL, formatBrDate } from '../lib/masks';
+import { formatBRL, formatCompactBRL, formatBrDate } from '../lib/masks';
 import { currentMonthRange, periodLabel, rangeQuery, type DateRange } from '../lib/period';
 import type { CashflowResponse, CashflowRow, CashflowDayResponse, CashflowForecastResponse } from '../lib/reports';
 import { PageContainer, PageHeader, KpiRow, KpiCard, DateRangeFilter, DataQualityBanner, qualityToItems, CardList, CardRow, CardMeta, QueryState, FilterChip, DataStatusBadge } from '../components/ui';
@@ -51,7 +51,9 @@ export function FluxoCaixaPage(): JSX.Element {
           <KpiRow cols={3}>
             <KpiCard label="Entradas" value={formatBRL(totals?.entradas ?? 0)} tone="emerald" compact sub={periodLabel(range)} />
             <KpiCard label="Saídas" value={formatBRL(totals?.saidas ?? 0)} tone="red" compact sub="contas a pagar baixadas" badge={<DataStatusBadge status="estimate" />} />
-            <KpiCard label="Variação" value={formatBRL(totals?.variacao ?? 0)} tone={variacaoTone} compact highlight sub="não é saldo em caixa" />
+            {/* compacto (R$ 545,8 mil) — valor cheio nao cabe no card de 1/3 em 375px e quebrava
+                linha no meio do numero (visto em screenshot real 25/08); o cheio vai no sub */}
+            <KpiCard label="Variação" value={formatCompactBRL(totals?.variacao ?? 0)} tone={variacaoTone} compact highlight sub={`${formatBRL(totals?.variacao ?? 0)} · não é saldo em caixa`} />
           </KpiRow>
 
           <QueryState query={cf} empty={rows.length === 0 ? 'Nenhuma entrada ou saída sincronizada no período.' : undefined}>
