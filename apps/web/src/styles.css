@@ -30,6 +30,7 @@ body {
 :root[data-theme='dark'] .border { border-color: #2b3648; }
 :root[data-theme='dark'] .divide-y > * + * { border-color: #2b3648; }
 
+:root[data-theme='dark'] .text-slate-900,
 :root[data-theme='dark'] .text-slate-800,
 :root[data-theme='dark'] .text-slate-700 { color: #e5e9f0 !important; }
 :root[data-theme='dark'] .text-slate-600 { color: #c3cad6 !important; }
