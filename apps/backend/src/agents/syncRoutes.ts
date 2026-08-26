@@ -86,15 +86,18 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
       case 'sales':
         persisted = await bulkUpsert(
           'sales',
-          ['tenantId', 'storeId', 'sourceId', 'saleDate', 'customerSourceId', 'operatorName', 'caixa', 'modelo', 'natureza', 'totalValue', 'cancelled', 'processed', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId', 'saleDate', 'saleHour', 'customerSourceId', 'operatorName', 'sellerName', 'caixa', 'modelo', 'natureza', 'totalValue', 'cancelled', 'processed', 'createdAt', 'updatedAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
             storeId: ctx.storeId,
             sourceId: String(r.sourceId),
             saleDate: new Date(String(r.saleDate)),
+            // saleHour so aceita 0-23; qualquer coisa fora (ou ausente de agente antigo) vira null.
+            saleHour: r.saleHour == null || Number.isNaN(Number(r.saleHour)) ? null : Math.trunc(Number(r.saleHour)),
             customerSourceId: r.customerSourceId ? String(r.customerSourceId) : null,
             operatorName: r.operatorName ? String(r.operatorName) : null,
+            sellerName: r.sellerName ? String(r.sellerName) : null,
             caixa: r.caixa ? String(r.caixa) : null,
             modelo: r.modelo ? String(r.modelo) : null,
             natureza: r.natureza ? String(r.natureza) : null,

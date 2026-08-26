@@ -59,9 +59,14 @@ export const CATALOG: Record<string, CatalogEntry> = {
     id: 'sync-sales-batch',
     description: 'Pagina de vendas para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    // SALE_HOUR de HORA_SAIDA (hora real da venda, TIME — pico de movimento) e SELLER_NAME de
+    // VENDEDOR (quem vendeu, != OPERADOR do caixa) — confirmados na prod 25/08: HORA_SAIDA 99,9%
+    // preenchida, VENDEDOR 64%. EXTRACT(HOUR ...) sai do proprio Firebird pra nao depender de
+    // parse de TIME no Node.
     sql: `
       SELECT FIRST ? V.ID AS SOURCE_ID, V.DATA_EMISSAO AS SALE_DATE, V.CLIENTE AS CUSTOMER_SOURCE_ID,
-             V.OPERADOR AS OPERATOR_NAME, V.CAIXA, V.MODELO, V.NATUREZA,
+             V.OPERADOR AS OPERATOR_NAME, V.VENDEDOR AS SELLER_NAME, V.CAIXA, V.MODELO, V.NATUREZA,
+             CASE WHEN V.HORA_SAIDA IS NULL THEN NULL ELSE EXTRACT(HOUR FROM V.HORA_SAIDA) END AS SALE_HOUR,
              V.VALOR_TOT_NOTA AS TOTAL_VALUE, V.CANCELADA AS CANCELLED, V.PROCESSADA AS PROCESSED
       FROM VENDAS V
       WHERE V.ID > ?

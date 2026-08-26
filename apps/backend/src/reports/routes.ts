@@ -1219,6 +1219,94 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     return { data: groups.map((g) => ({ operator: g.operatorName, qtd: g._count, value: Number(g._sum.totalValue ?? 0) })) };
   }));
 
+  // ─── Dashboard novo (26/08): totais do dia, pico por hora, ranking por VENDEDOR ──────────
+
+  // Totais do "dia" (default = mes atual dia 1..hoje; aceita from/to). Numeros que o dono pediu:
+  // vendido (Sale), recebido em caixa (fluxo realizado), a receber baixado, contas pagas.
+  app.get('/api/reports/dashboard/today', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('dash-today', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const scope = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) };
+
+    const [vendas, recebidoAgg, contasReceber, contasPagar, meta] = await Promise.all([
+      prisma.sale.aggregate({ where: { ...scope, cancelled: false, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
+      // recebido de verdade em caixa no periodo = fluxo realizado (entradas), reaproveita buildCashflow
+      buildCashflow(req.user!.tenantId, storeId, from, to, 'day'),
+      prisma.receivable.aggregate({ where: { ...scope, cancelled: false, receivedValue: { gt: 0 }, receivedDate: { gte: from, lte: to } }, _sum: { receivedValue: true }, _count: true }),
+      prisma.payable.aggregate({ where: { ...scope, cancelled: false, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, _sum: { paidValue: true }, _count: true }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    return {
+      periodo: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+      vendido: { total: Number(vendas._sum.totalValue ?? 0), count: vendas._count },
+      recebidoCaixa: { total: recebidoAgg.totals.entradas },
+      contasRecebidas: { total: Number(contasReceber._sum.receivedValue ?? 0), count: contasReceber._count },
+      contasPagas: { total: Number(contasPagar._sum.paidValue ?? 0), count: contasPagar._count },
+      quality: recebidoAgg.quality,
+      meta,
+    };
+  }));
+
+  // Horario de pico: vendas por hora do dia (0-23) nos ultimos N dias. Usa saleHour
+  // (VENDAS.HORA_SAIDA) — so tem valor pra venda sincronizada apos 26/08; agente antigo = null.
+  app.get('/api/reports/dashboard/peak-hours', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('peak-hours', async (req) => {
+    const query = z.object({ days: z.coerce.number().int().min(1).max(90).default(7), storeId: z.string().optional() }).parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const since = new Date(Date.now() - query.days * 86_400_000);
+
+    const rows = await prisma.$queryRaw<{ h: number; qtd: bigint; total: unknown }[]>(
+      storeId
+        ? Prisma.sql`SELECT "saleHour" AS h, COUNT(*) AS qtd, SUM("totalValue") AS total FROM sales
+            WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`
+        : Prisma.sql`SELECT "saleHour" AS h, COUNT(*) AS qtd, SUM("totalValue") AS total FROM sales
+            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`,
+    );
+    const byHour = new Map(rows.map((r) => [Number(r.h), r]));
+    // preenche 0-23 (horas sem venda viram 0) pro grafico ter o dia inteiro; corta as pontas
+    // vazias no front. cobertura = quantas vendas tem hora (agente novo) vs total.
+    const data = Array.from({ length: 24 }, (_, h) => {
+      const r = byHour.get(h);
+      return { hora: h, qtd: r ? Number(r.qtd) : 0, total: r ? Number(r.total) : 0 };
+    });
+    const comHora = data.reduce((s, d) => s + d.qtd, 0);
+    const pico = data.reduce((best, d) => (d.qtd > best.qtd ? d : best), data[0]!);
+    return { data, dias: query.days, picoHora: comHora > 0 ? pico.hora : null, semDado: comHora === 0 };
+  }));
+
+  // Ranking por VENDEDOR (sellerName, != operador de caixa) — pedido do dono 25/08.
+  app.get('/api/reports/dashboard/seller-ranking', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('seller-ranking', async (req) => {
+    const query = z.object({ from: z.string().date().optional(), to: z.string().date().optional(), storeId: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(20) }).parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+
+    const groups = await prisma.sale.groupBy({
+      by: ['sellerName'],
+      where: { tenantId: req.user!.tenantId, cancelled: false, sellerName: { not: null }, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+      _sum: { totalValue: true },
+      _count: true,
+      orderBy: { _sum: { totalValue: 'desc' } },
+      take: query.limit,
+    });
+    const grandTotal = groups.reduce((s, g) => s + Number(g._sum.totalValue ?? 0), 0);
+    // total de venda no periodo (com E sem vendedor) — pra mostrar quanto do faturamento
+    // tem vendedor identificado (VENDEDOR e 64% preenchido na prod).
+    const totalPeriodo = await prisma.sale.aggregate({ where: { tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) }, _sum: { totalValue: true } });
+    const comVendedor = grandTotal;
+    const totalGeral = Number(totalPeriodo._sum.totalValue ?? 0);
+    return {
+      data: groups.map((g) => ({
+        seller: g.sellerName,
+        vendas: g._count,
+        total: Number(g._sum.totalValue ?? 0),
+        ticket: g._count > 0 ? Number(g._sum.totalValue ?? 0) / g._count : 0,
+        pct: grandTotal > 0 ? Number(g._sum.totalValue ?? 0) / grandTotal : 0,
+      })),
+      cobertura: totalGeral > 0 ? comVendedor / totalGeral : 0,
+    };
+  }));
+
   registerFinanceRoutes(app);
 }
 

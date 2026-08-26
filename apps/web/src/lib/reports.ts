@@ -158,3 +158,30 @@ export interface MonthlyGoalResponse {
   totalDays: number;
   elapsedDays: number;
 }
+
+// ---------- GET /api/reports/dashboard/today (26/08) ----------
+export interface DashTodayResponse {
+  periodo: { from: string; to: string };
+  vendido: { total: number; count: number };
+  recebidoCaixa: { total: number };
+  contasRecebidas: { total: number; count: number };
+  contasPagas: { total: number; count: number };
+  quality: CashflowQuality;
+  meta: FreshnessMeta;
+}
+
+// ---------- GET /api/reports/dashboard/peak-hours ----------
+export interface PeakHourRow { hora: number; qtd: number; total: number }
+export interface PeakHoursResponse {
+  data: PeakHourRow[]; // sempre 24 posicoes (0..23)
+  dias: number;
+  picoHora: number | null; // hora com mais vendas; null se sem dado
+  semDado: boolean; // true = nenhuma venda tem hora ainda (agente antigo)
+}
+
+// ---------- GET /api/reports/dashboard/seller-ranking ----------
+export interface SellerRow { seller: string | null; vendas: number; total: number; ticket: number; pct: number }
+export interface SellerRankingResponse {
+  data: SellerRow[];
+  cobertura: number; // 0-1: fracao do faturamento com vendedor identificado
+}

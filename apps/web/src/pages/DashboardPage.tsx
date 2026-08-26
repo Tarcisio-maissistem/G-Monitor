@@ -1,192 +1,127 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { copyToClipboard } from '../lib/clipboard';
-import { useToast } from '../components/Toast';
-import { Spinner } from '../components/Spinner';
+import { formatBRL, formatCompactBRL, formatInt } from '../lib/masks';
+import { currentMonthRange, monthLabel } from '../lib/period';
+import type { DashTodayResponse } from '../lib/reports';
+import { buildWhatsAppResumo } from '../lib/whatsapp';
+import {
+  PageContainer, PageHeader, KpiRow, KpiCard, QueryState,
+  DataQualityBanner, qualityToItems, metaToItems, CopyWhatsAppButton,
+} from '../components/ui';
 import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
 import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart';
+import { PeakHoursChart } from '../components/dashboard/PeakHoursChart';
+import { SellerRanking } from '../components/dashboard/SellerRanking';
 
 interface SalesSummary {
-  data: {
-    quantity: number;
-    total: number;
-    ticket: number;
-    workingDays: number;
-    uniqueCustomers: number;
-  };
+  data: { quantity: number; total: number; ticket: number; workingDays: number; uniqueCustomers: number };
   meta: { lastSyncedAt: string | null; stalenessSeconds: number | null; agentsOffline: string[] };
 }
-
 interface AbcProducts {
-  data: {
-    rows: { productCode: string | null; description: string | null; quantity: number; value: number; accPct: number; klass: 'A' | 'B' | 'C' }[];
-    grandTotal: number;
-  };
-  meta: SalesSummary['meta'];
+  data: { rows: { productCode: string | null; description: string | null; quantity: number; value: number; accPct: number; klass: 'A' | 'B' | 'C' }[]; grandTotal: number };
 }
-
 interface SalesByPayment {
-  data: {
-    rows: { paymentType: string; total: number; count: number; pct: number }[];
-    grandTotal: number;
-  };
-  meta: SalesSummary['meta'];
-}
-
-interface OperatorCommission {
-  data: {
-    rows: { operator: string; count: number; total: number; pct: number }[];
-    grandTotal: number;
-  };
-  meta: SalesSummary['meta'];
+  data: { rows: { paymentType: string; total: number; count: number; pct: number }[]; grandTotal: number };
 }
 
 const KLASS_COLOR: Record<string, string> = { A: 'text-green-700 bg-green-50', B: 'text-blue-700 bg-blue-50', C: 'text-slate-600 bg-slate-50' };
 
-// Header/logout/seletor de empresa agora ficam no AppShell (sidebar). Esta pagina e so
-// o conteudo da rota "/" — resumo geral de vendas.
+// Dashboard reorganizado 26/08 (pedido do dono: estava "bagunçado"). Topo = totais do
+// período que interessam ao empresário (vendido / recebido / contas); depois pico de
+// horário, ranking por VENDEDOR (não caixa), formas de pagamento e curva ABC.
 export function DashboardPage(): JSX.Element {
-  // Padrao: mes atual, do dia 1 ate hoje (nao "ultimos 30 dias" — pedido do dono 23/08).
-  const today = new Date();
-  const from = new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)).toISOString().slice(0, 10);
-  const to = today.toISOString().slice(0, 10);
+  const range = currentMonthRange(); // mês atual, dia 1..hoje (regra do dono 23/08)
+  const { from, to } = range;
   const qs = `from=${from}&to=${to}`;
-  const mesAtualLabel = today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const mesLabel = monthLabel();
 
-  const [showAllOperators, setShowAllOperators] = useState(false);
-  const toast = useToast();
-
+  const today = useQuery({ queryKey: ['dash-today', from, to], queryFn: () => api<DashTodayResponse>(`/api/reports/dashboard/today?${qs}`) });
   const summary = useQuery({ queryKey: ['sales-summary', from, to], queryFn: () => api<SalesSummary>(`/api/reports/sales-summary?${qs}`) });
-  const abc = useQuery({ queryKey: ['abc-products', from, to], queryFn: () => api<AbcProducts>(`/api/reports/abc-products?${qs}`) });
   const payments = useQuery({ queryKey: ['sales-by-payment', from, to], queryFn: () => api<SalesByPayment>(`/api/reports/sales-by-payment?${qs}`) });
-  const operators = useQuery({ queryKey: ['operator-commission', from, to], queryFn: () => api<OperatorCommission>(`/api/reports/operator-commission?${qs}`) });
+  const abc = useQuery({ queryKey: ['abc-products', from, to], queryFn: () => api<AbcProducts>(`/api/reports/abc-products?${qs}`) });
 
-  const staleness = summary.data?.meta.stalenessSeconds;
-  const agentsOffline = summary.data?.meta.agentsOffline ?? [];
+  const t = today.data;
+  const s = summary.data?.data;
 
-  const handleCopyResumo = async (): Promise<void> => {
-    const text = buildWhatsAppResumo(mesAtualLabel, summary.data?.data, payments.data?.data, operators.data?.data);
-    const ok = await copyToClipboard(text);
-    toast.push(ok ? { type: 'success', message: 'Resumo copiado — cole no WhatsApp.' } : { type: 'error', message: 'Não consegui copiar. Tente selecionar o texto manualmente.' });
-  };
+  const whatsapp = buildWhatsAppResumo({
+    titulo: `Resumo de ${mesLabel}`,
+    emoji: '📊',
+    linhas: [
+      { label: '💰 Vendido', value: t?.vendido.total ?? 0, bold: true },
+      { label: '🧾 Recebido em caixa', value: t?.recebidoCaixa.total ?? 0 },
+      { label: '📥 Contas recebidas', value: t?.contasRecebidas.total ?? 0 },
+      { label: '📤 Contas pagas', value: t?.contasPagas.total ?? 0 },
+      { label: '🛒 Vendas', value: s ? formatInt(s.quantity) : '0' },
+      { label: '🎫 Ticket médio', value: s?.ticket ?? 0 },
+    ],
+  });
 
   return (
-    <div className="p-3 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      {agentsOffline.length > 0 && (
-        <div className="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-lg text-sm">
-          ⚠ {agentsOffline.length} agente{agentsOffline.length > 1 ? 's' : ''} offline.
-        </div>
-      )}
-      {staleness && staleness > 300 && (
-        <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg text-sm">
-          ⚠ Dados sincronizados há {Math.round(staleness / 60)} min — pode haver defasagem.
-        </div>
-      )}
+    <PageContainer>
+      <PageHeader
+        title={`Resumo de ${mesLabel}`}
+        subtitle="Os números do período — vendas, caixa e contas."
+        actions={<CopyWhatsAppButton text={whatsapp} disabled={!t} />}
+      />
 
-      {/* KPIs */}
-      <section>
-        <div className="flex items-center justify-between mb-3 gap-2">
-          <h2 className="text-lg font-semibold text-slate-700">Resumo de {mesAtualLabel}</h2>
-          <button
-            onClick={() => void handleCopyResumo()}
-            disabled={!summary.data}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-            title="Copiar resumo formatado pra colar no WhatsApp"
-          >
-            <span>📋</span> Copiar p/ WhatsApp
-          </button>
-        </div>
-        {summary.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
-            <Spinner className="h-3.5 w-3.5" /> Carregando...
-          </div>}
-        {summary.error && <ErrorBox msg={(summary.error as Error).message} />}
-        {summary.data && summary.data.data.quantity === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
-        {summary.data && summary.data.data.quantity > 0 && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <KpiCard label="Vendas" value={summary.data.data.quantity.toLocaleString('pt-BR')} />
-            <KpiCard label="Faturamento" value={formatBRL(summary.data.data.total)} highlight />
-            <KpiCard label="Ticket Médio" value={formatBRL(summary.data.data.ticket)} />
-            <KpiCard label="Dias Úteis" value={summary.data.data.workingDays.toString()} />
-            <KpiCard label="Clientes Únicos" value={summary.data.data.uniqueCustomers.toLocaleString('pt-BR')} />
-          </div>
-        )}
-      </section>
+      <DataQualityBanner items={[...qualityToItems(t?.quality), ...metaToItems(today.data?.meta)]} />
+
+      {/* Totais do período — o que o dono pediu em primeiro plano */}
+      <QueryState query={today}>
+        <KpiRow cols={4}>
+          <KpiCard label="Vendido" value={formatCompactBRL(t?.vendido.total ?? 0)} tone="blue" highlight sub={`${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`} />
+          <KpiCard label="Recebido em caixa" value={formatCompactBRL(t?.recebidoCaixa.total ?? 0)} tone="emerald" sub={formatBRL(t?.recebidoCaixa.total ?? 0)} />
+          <KpiCard label="Contas recebidas" value={formatCompactBRL(t?.contasRecebidas.total ?? 0)} tone="emerald" sub={`${formatInt(t?.contasRecebidas.count ?? 0)} baixas`} />
+          <KpiCard label="Contas pagas" value={formatCompactBRL(t?.contasPagas.total ?? 0)} tone="red" sub={`${formatInt(t?.contasPagas.count ?? 0)} baixas`} />
+        </KpiRow>
+      </QueryState>
+
+      {/* linha secundária: métricas de venda */}
+      {s && s.quantity > 0 && (
+        <KpiRow cols={3}>
+          <KpiCard label="Ticket médio" value={formatBRL(s.ticket)} compact />
+          <KpiCard label="Dias com venda" value={formatInt(s.workingDays)} compact />
+          <KpiCard label="Clientes únicos" value={formatInt(s.uniqueCustomers)} compact />
+        </KpiRow>
+      )}
 
       <RevenueYoYChart />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Formas de pagamento */}
-        <section className="bg-white rounded-xl shadow-sm border p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">Formas de Pagamento</h3>
-          {payments.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
-            <Spinner className="h-3.5 w-3.5" /> Carregando...
-          </div>}
-          {payments.error && <ErrorBox msg={(payments.error as Error).message} />}
-          {payments.data && payments.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
+        <PeakHoursChart />
+        <SellerRanking from={from} to={to} />
+      </div>
+
+      {/* Formas de pagamento: lista + pizza */}
+      <section className="bg-white rounded-xl shadow-sm border p-5">
+        <h3 className="font-semibold text-slate-700 mb-4">Formas de Pagamento</h3>
+        <QueryState query={payments} empty={payments.data && payments.data.data.rows.length === 0 ? `Nenhum pagamento em ${mesLabel}.` : undefined}>
           {payments.data && payments.data.data.rows.length > 0 && (
             <div className="grid sm:grid-cols-2 gap-4 items-center">
               <div className="space-y-2">
                 {payments.data.data.rows.slice(0, 6).map((r) => (
                   <div key={r.paymentType} className="flex items-center gap-2">
-                    <span className="text-sm text-slate-600 w-32 truncate">{r.paymentType}</span>
-                    <div className="flex-1 bg-slate-100 rounded-full h-2">
+                    <span className="text-sm text-slate-600 flex-1 min-w-0 truncate">{r.paymentType}</span>
+                    <div className="w-16 sm:w-24 bg-slate-100 rounded-full h-2 shrink-0">
                       <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${(r.pct * 100).toFixed(1)}%` }} />
                     </div>
-                    <span className="text-sm font-medium text-slate-700 w-24 text-right">{formatBRL(r.total)}</span>
-                    <span className="text-xs text-slate-400 w-10 text-right">{(r.pct * 100).toFixed(0)}%</span>
+                    <span className="text-sm font-medium text-slate-700 w-20 text-right shrink-0">{formatBRL(r.total)}</span>
                   </div>
                 ))}
                 <div className="pt-2 border-t text-sm font-semibold text-slate-700 flex justify-between">
-                  <span>Total</span>
-                  <span>{formatBRL(payments.data.data.grandTotal)}</span>
+                  <span>Total</span><span>{formatBRL(payments.data.data.grandTotal)}</span>
                 </div>
               </div>
               <PaymentMethodsChart rows={payments.data.data.rows} />
             </div>
           )}
-        </section>
-
-        {/* Ranking de vendedores */}
-        <section className="bg-white rounded-xl shadow-sm border p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">Ranking de Vendedores</h3>
-          {operators.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
-            <Spinner className="h-3.5 w-3.5" /> Carregando...
-          </div>}
-          {operators.error && <ErrorBox msg={(operators.error as Error).message} />}
-          {operators.data && operators.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
-          {operators.data && operators.data.data.rows.length > 0 && (
-            <div className="space-y-2">
-              {operators.data.data.rows.slice(0, showAllOperators ? 100 : 10).map((r, i) => (
-                <div key={r.operator} className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 w-4">{i + 1}</span>
-                  <span className="text-sm text-slate-600 flex-1 truncate">{r.operator}</span>
-                  <span className="text-xs text-slate-400">{r.count} vend.</span>
-                  <span className="text-sm font-medium text-slate-700 w-28 text-right">{formatBRL(r.total)}</span>
-                </div>
-              ))}
-              {operators.data.data.rows.length > 10 && (
-                <button
-                  onClick={() => setShowAllOperators((v) => !v)}
-                  className="w-full text-center text-xs text-blue-600 hover:text-blue-800 pt-2 border-t"
-                >
-                  {showAllOperators ? 'ver menos' : `ver mais (${operators.data.data.rows.length - 10})`}
-                </button>
-              )}
-            </div>
-          )}
-        </section>
-      </div>
+        </QueryState>
+      </section>
 
       {/* Curva ABC */}
       <section className="bg-white rounded-xl shadow-sm border p-5">
         <h3 className="font-semibold text-slate-700 mb-4">Curva ABC — Top 20 Produtos</h3>
-        {abc.isLoading && <div className="text-slate-400 text-sm flex items-center gap-2">
-            <Spinner className="h-3.5 w-3.5" /> Carregando...
-          </div>}
-        {abc.error && <ErrorBox msg={(abc.error as Error).message} />}
-        {abc.data && abc.data.data.rows.length === 0 && <EmptyPeriod mesAtualLabel={mesAtualLabel} />}
-        {abc.data && abc.data.data.rows.length > 0 && (
+        <QueryState query={abc} empty={abc.data && abc.data.data.rows.length === 0 ? `Nenhuma venda em ${mesLabel}.` : undefined}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -199,10 +134,10 @@ export function DashboardPage(): JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {abc.data.data.rows.slice(0, 20).map((r, i) => (
+                {(abc.data?.data.rows ?? []).slice(0, 20).map((r, i) => (
                   <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
                     <td className="py-2 pr-4 text-slate-700 max-w-xs truncate">{r.description ?? r.productCode ?? '—'}</td>
-                    <td className="py-2 text-right text-slate-600">{Number(r.quantity).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
+                    <td className="py-2 text-right text-slate-600">{formatInt(r.quantity)}</td>
                     <td className="py-2 text-right font-medium text-slate-800">{formatBRL(r.value)}</td>
                     <td className="py-2 text-right text-slate-500">{(r.accPct * 100).toFixed(1)}%</td>
                     <td className="py-2 text-center">
@@ -213,73 +148,8 @@ export function DashboardPage(): JSX.Element {
               </tbody>
             </table>
           </div>
-        )}
+        </QueryState>
       </section>
-    </div>
+    </PageContainer>
   );
-}
-
-function KpiCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }): JSX.Element {
-  return (
-    <div className="bg-white rounded-xl shadow-sm border p-4">
-      <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">{label}</div>
-      <div className={`text-2xl font-bold ${highlight ? 'text-blue-700' : 'text-slate-800'}`}>{value}</div>
-    </div>
-  );
-}
-
-// Mostra quando a query voltou vazia (nao e erro — so nao ha venda no periodo escolhido).
-// Achado testando a UI de verdade 24/08: sem isso, o dashboard so mostrava "R$ 0,00" em
-// tudo, sem dar pra saber se estava quebrado ou se so nao tinha venda no mes atual.
-function EmptyPeriod({ mesAtualLabel }: { mesAtualLabel: string }): JSX.Element {
-  return (
-    <div className="text-sm text-slate-400 py-4 text-center">
-      Nenhuma venda registrada em {mesAtualLabel} no GDOOR.
-    </div>
-  );
-}
-
-// Monta o texto no formato do WhatsApp (*negrito*, sem HTML) — pedido do dono 24/08, pra
-// mandar o resumo do dia/mes direto pro grupo/cliente sem precisar redigitar numero.
-function buildWhatsAppResumo(
-  mesLabel: string,
-  summary?: SalesSummary['data'],
-  payments?: SalesByPayment['data'],
-  operators?: OperatorCommission['data'],
-): string {
-  const lines: string[] = [`📊 *Resumo de ${mesLabel}*`, ''];
-
-  if (summary && summary.quantity > 0) {
-    lines.push(`💰 Faturamento: *${formatBRL(summary.total)}*`);
-    lines.push(`🛒 Vendas: ${summary.quantity.toLocaleString('pt-BR')}`);
-    lines.push(`🎫 Ticket médio: ${formatBRL(summary.ticket)}`);
-    lines.push(`👥 Clientes únicos: ${summary.uniqueCustomers.toLocaleString('pt-BR')}`);
-  } else {
-    lines.push('Nenhuma venda registrada nesse período.');
-  }
-
-  if (payments && payments.rows.length > 0) {
-    lines.push('', '💳 *Formas de Pagamento*');
-    for (const r of payments.rows.slice(0, 6)) {
-      lines.push(`${r.paymentType}: ${formatBRL(r.total)} (${(r.pct * 100).toFixed(0)}%)`);
-    }
-  }
-
-  if (operators && operators.rows.length > 0) {
-    lines.push('', '🏆 *Top Vendedores*');
-    operators.rows.slice(0, 5).forEach((r, i) => {
-      lines.push(`${i + 1}. ${r.operator} — ${formatBRL(r.total)}`);
-    });
-  }
-
-  lines.push('', '_Gerado pelo G-Monitor_');
-  return lines.join('\n');
-}
-
-function ErrorBox({ msg }: { msg: string }): JSX.Element {
-  return <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded p-3">{msg}</div>;
-}
-
-function formatBRL(n: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
 }
