@@ -299,6 +299,10 @@ model Payment {
   paymentDate DateTime
   paymentType String   // PIX, CARTAO, CREDIARIO, DINHEIRO, OUTROS
   especie     String?  // valor bruto vindo do GDOOR
+  // MOV_OPERADORES.TIPO normalizado (P5, 26/08): venda | recebimento | sangria | suprimento |
+  // outro. Sangria/suprimento sao movimento de caixa, NAO receita — antes entravam como
+  // "avulsos". null = linha sincronizada por agente antigo (tratar como venda).
+  kind        String?
   value       Decimal  @db.Decimal(14, 2)
   createdAt   DateTime @default(now())
 
@@ -402,11 +406,36 @@ model CashClosing {
   totalExpected Decimal? @db.Decimal(14, 2)
   totalCounted  Decimal? @db.Decimal(14, 2)
   difference    Decimal? @db.Decimal(14, 2)
+  // FECHAMENTO_CAIXA (GDOOR, confirmado 26/08): NUM_PDV (qual caixa) e VALOR_ABERTURA (fundo
+  // de troco). "Esperado" NAO vem do GDOOR — e calculado por nos a partir de MOV_OPERADORES
+  // (kind venda/recebimento/sangria/suprimento) pro mesmo PDV/janela. Conferencia D20.
+  pdv           String?
+  openingAmount Decimal? @db.Decimal(14, 2)
   createdAt     DateTime @default(now())
+
+  species       CashClosingSpecies[]
 
   @@unique([tenantId, storeId, sourceId])
   @@index([tenantId, storeId, openedAt])
   @@map("cash_closings")
+}
+
+// FECHAMENTO_CAIXA_ESPECIES: o que o OPERADOR CONTOU por forma (DINHEIRO, PIX ENTREGA, PRAZO...)
+// ao fechar. E a verdade FISICA; o esperado (sistema) vem de payments. quebra = contado - esperado.
+model CashClosingSpecies {
+  id              String      @id @default(cuid())
+  tenantId        String
+  storeId         String
+  closingId       String
+  closing         CashClosing @relation(fields: [closingId], references: [id], onDelete: Cascade)
+  closingSourceId String      // FECHAMENTO_CAIXA.ID no Firebird (pra resolver FK no sync)
+  sourceId        String      // FECHAMENTO_CAIXA_ESPECIES.ID
+  especie         String
+  counted         Decimal     @db.Decimal(14, 2)
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, closingSourceId])
+  @@map("cash_closing_species")
 }
 
 // ─── Audit + notifications + billing ────────────────────────────────────────

@@ -129,3 +129,24 @@ ChartCard genéricos.
 Sync de produto/custo (6-8h), direção em MOV_OPERADORES ou tabela de caixa (8-14h + Firebird),
 CashClosing (5h), categoria do PAGAR (6-16h), baixas parciais (8-10h), DESCONTO/devoluções (4h).
 Cada tabela nova precisa de `detectSchema` como o financeiro (D11 provou que varia).
+
+## D20. Conferência de Caixa (26/08) — esperado × contado, quebra separada do faturamento
+
+Pergunta do dono: "qual é a verdade — o que o GDOOR registrou no expediente ou o que o operador
+informou no fechamento?" **As duas, para perguntas diferentes.** Confirmado no Firebird do piloto:
+MOV_OPERADORES é gravado automaticamente pela operação (o operador não edita) — é o **esperado**
+(verdade do sistema, vale pro faturamento/DRE, sempre). FECHAMENTO_CAIXA + FECHAMENTO_CAIXA_ESPECIES
+é o que o operador **contou** na gaveta — verdade física, serve só pra conferência.
+
+- `quebra = contado − esperado` por forma (normalizePaymentType nos dois lados), por fechamento
+  (PDV + dia). Negativo = falta (responsabilidade do operador), positivo = sobra. **Nunca soma/
+  subtrai do faturamento.**
+- `esperado(dinheiro) = fundo de troco (VALOR_ABERTURA) + vendas em dinheiro + suprimentos − sangrias`.
+  Sangria/suprimento (P5, `Payment.kind`) não têm PDV no GDOOR: só entram quando há UM fechamento
+  no dia; com vários caixas viram aviso. Melhorar quando houver coluna de PDV (não existe hoje).
+- Match pagamento→caixa por `sales.caixa` ('001') ↔ `FECHAMENTO_CAIXA.NUM_PDV` (1), numérico.
+- Sync: `sync-cash-closings-batch` + `sync-cash-closing-species-batch` (agente **v0.8.0**), models
+  `CashClosing` (+pdv, openingAmount) e `CashClosingSpecies`. Endpoint `/api/reports/cash-conference`.
+  Tela `/conferencia-caixa` (mobile-first, kit ui/).
+- Limitação real: o banco do PC do dono tinha `VALOR_FECHAMENTO=0` e espécies vazias na maioria —
+  validar contra loja real (J.Kastros) depois de instalar o v0.8.

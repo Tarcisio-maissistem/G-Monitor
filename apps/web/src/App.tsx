@@ -24,6 +24,7 @@ import { FechamentoMensalPage } from './pages/FechamentoMensalPage';
 import { RelatoriosPage } from './pages/RelatoriosPage';
 import { FluxoCaixaPage } from './pages/FluxoCaixaPage';
 import { DrePage } from './pages/DrePage';
+import { ConferenciaCaixaPage } from './pages/ConferenciaCaixaPage';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -107,6 +108,7 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/relatorios') return <RelatoriosPage />;
   if (path === '/fluxo-caixa') return <FluxoCaixaPage />;
   if (path === '/dre') return <DrePage />;
+  if (path === '/conferencia-caixa') return <ConferenciaCaixaPage />;
 
   // Empresas: console de gestao cross-tenant, so pra super-admin.
   if (path === '/empresas') return isSuperAdmin ? <EmpresasPage /> : <ComingSoon label="Empresas" />;

@@ -46,6 +46,9 @@ telas usam nas ondas seguintes.
 | P2 | **Pré-venda (PV), NFC-e (65) e NF-e (55) contam TODAS como venda.** "Toda prevenda é registrada como venda; o recebimento pode ser no PDV (entra no fechamento do caixa) ou no retaguarda." | Receita bruta = `Sale.cancelled=false`, **sem** filtrar `processed`. Naturezas `Devolução%` e `Complementar%` ficam fora da receita (não são venda) e aparecem no memo. |
 | P3 | **Liberar ao cliente com selo "estimativa / N/D" visível** (não segurar até ter CMV e sangria) | UI mostra `DataQualityBanner` + badge por linha; "X de 8 linhas com dado real". A palavra "lucro" não aparece — é "resultado aproximado". |
 
+| P4 (26/08) | **Venda de registro = PV (pré-venda) + NF-e 55. NFC-e 65 é cópia fiscal do PV e NÃO soma** — exceto NFC-e com pagamento próprio (venda direta sem PV, anomalia a flagrar). Confirmado no Firebird: 214k pagamentos de MOV_OPERADORES apontam pro PV; NFC-e 65 tem 0 pagamento (só 8 "NFC-e P nnn" = diretas). Somar todos os modelos DOBRAVA a receita (~+27%). | `SALE_OF_RECORD` em reports/routes.ts (`modelo <> '65'`); KPI "NFC-e sem pré-venda" no dashboard. `SAIDA='X'` não é sincronizado (só 145 PVs sem SAIDA, todas não-processadas) — ignorado. |
+| P5 (26/08) | **Sangria e suprimento são movimentos de caixa, não recebimento.** MOV_OPERADORES.TIPO = SANGRIA (2.254) / SUPRIMENTO (1.268) / Recebimentos / "PV nnn" / "NOTA FISCAL". Os "125 avulsos DINHEIRO" da Fase 0 eram sangria/suprimento, não crediário. | `Payment.kind` (venda/recebimento/sangria/suprimento/outro); fluxo de caixa: sangria = saída, suprimento = aporte (não receita), ambos fora de "recebido". Base da Conferência de Caixa (D20). |
+
 ## Achados da Fase 0 (queries na produção, 25/08)
 
 - **Formas de pagamento reais** (literais em `payments.paymentType`, com mojibake herdado de

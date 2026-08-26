@@ -10,6 +10,9 @@ export interface PaymentAgg {
   day: string; // YYYY-MM-DD
   paymentType: string;
   avulso: boolean; // saleId IS NULL
+  // MOV_OPERADORES.TIPO normalizado (P5): venda|recebimento|sangria|suprimento|outro.
+  // null/undefined = linha de agente antigo (tratada como venda).
+  kind?: string | null;
   total: number;
   count: number;
 }
@@ -26,6 +29,8 @@ export interface CashflowDetail {
   avulsos: number;
   crediarioRecebido: number;
   contasPagas: number;
+  sangrias: number; // retirada de dinheiro do caixa (P5) — e SAIDA
+  suprimentos: number; // aporte de troco/fundo (P5) — nao e receita; informativo
 }
 
 export interface CashflowRow {
@@ -92,7 +97,7 @@ function emptyRow(dia: string): CashflowRow {
     saldoDia: 0,
     saldoAcumulado: 0,
     movimentos: 0,
-    detalhe: { vendas: { dinheiro: 0, cartao: 0, pix: 0, outros: 0 }, avulsos: 0, crediarioRecebido: 0, contasPagas: 0 },
+    detalhe: { vendas: { dinheiro: 0, cartao: 0, pix: 0, outros: 0 }, avulsos: 0, crediarioRecebido: 0, contasPagas: 0, sangrias: 0, suprimentos: 0 },
   };
 }
 
@@ -115,6 +120,19 @@ export function mergeCashflow(
 
   let avulsosNaoClassificados = 0;
   for (const p of input.payments) {
+    // P5: sangria/suprimento antes caiam em "avulsos" (nao tem saleId). Agora tem lugar proprio.
+    if (p.kind === 'sangria') {
+      const row = rowFor(p.day);
+      row.detalhe.sangrias += p.total;
+      row.movimentos += p.count;
+      continue;
+    }
+    if (p.kind === 'suprimento') {
+      const row = rowFor(p.day);
+      row.detalhe.suprimentos += p.total;
+      row.movimentos += p.count;
+      continue;
+    }
     const key = normalizePaymentType(p.paymentType);
     // SEM PAGAMENTO (null) nao soma; crediario NUNCA entra por aqui (P1) — nem quando avulso,
     // senao contaria 2x com a baixa do Receivable.
@@ -144,7 +162,7 @@ export function mergeCashflow(
   for (const row of data) {
     const v = row.detalhe.vendas;
     row.entradas = round2(v.dinheiro + v.cartao + v.pix + v.outros + row.detalhe.avulsos + row.detalhe.crediarioRecebido);
-    row.saidas = round2(row.detalhe.contasPagas);
+    row.saidas = round2(row.detalhe.contasPagas + row.detalhe.sangrias);
     row.saldoDia = round2(row.entradas - row.saidas);
     acumulado = round2(acumulado + row.saldoDia);
     row.saldoAcumulado = acumulado;

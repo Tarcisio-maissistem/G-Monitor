@@ -115,6 +115,19 @@ async function syncSaleItems(cfg: AgentConfig): Promise<number> {
   return persisted;
 }
 
+// MOV_OPERADORES.TIPO (confirmado na prod 26/08): 'PV 000442662' (pagamento da pre-venda),
+// 'NFC-e P 143955' (NFC-e direta, sem PV — anomalia), 'NOTA FISCAL' (NF-e 55),
+// 'Recebimentos' (baixa de credito/carteira no PDV), 'SANGRIA', 'SUPRIMENTO'.
+// Sangria/suprimento NAO sao receita (P5) — antes entravam no caixa como "avulsos".
+function paymentKind(tipo: string | null | undefined): string {
+  const t = String(tipo ?? '').trim().toUpperCase();
+  if (t === 'SANGRIA') return 'sangria';
+  if (t === 'SUPRIMENTO') return 'suprimento';
+  if (t.startsWith('RECEB')) return 'recebimento';
+  if (t.startsWith('PV ') || t.startsWith('NFC-E') || t === 'NOTA FISCAL') return 'venda';
+  return 'outro';
+}
+
 async function syncPayments(cfg: AgentConfig): Promise<number> {
   const pool = getFirebirdPool();
   if (!pool) return 0;
@@ -129,6 +142,7 @@ async function syncPayments(cfg: AgentConfig): Promise<number> {
     payment_type: string | null;
     especie: string | null;
     total_value: number;
+    tipo: string | null;
   }>(entry.sql, [BATCH_SIZE, afterId]);
   if (rows.length === 0) return 0;
 
@@ -139,6 +153,7 @@ async function syncPayments(cfg: AgentConfig): Promise<number> {
     paymentType: r['payment_type'] ? String(r['payment_type']) : 'OUTROS',
     especie: r['especie'] ? String(r['especie']) : null,
     value: Number(r.total_value),
+    kind: paymentKind(r['tipo']),
   }));
 
   const lastId = String(rows[rows.length - 1]!.source_id);
@@ -224,6 +239,59 @@ function syncReceivables(cfg: AgentConfig): Promise<number> {
 // PARA false e investigar antes de tentar de novo — nao ajustar so lote/concorrencia.
 const SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED = true;
 
+// DATE + TIME separados no GDOOR -> um ISO so. TIME vem como Date de 1970 (node-firebird).
+function combineDateTime(d: unknown, t: unknown): string | null {
+  if (!d) return null;
+  const date = new Date(String(d));
+  if (t) {
+    const time = new Date(String(t));
+    date.setUTCHours(time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds(), 0);
+  }
+  return date.toISOString();
+}
+
+// FECHAMENTO_CAIXA -> cashClosings (D20). Volume pequeno (~5k linhas no piloto).
+async function syncCashClosings(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+  const entry = resolveReport('sync-cash-closings-batch')!;
+  const afterId = Number(getCheckpoint('cashClosings') ?? '0');
+  const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, afterId]);
+  if (rows.length === 0) return 0;
+  const camelRows = rows.map((r) => ({
+    sourceId: String(r['source_id']),
+    pdv: r['pdv'] != null ? String(r['pdv']) : null,
+    openedAt: combineDateTime(r['data_abertura'], r['hora_abertura']),
+    closedAt: combineDateTime(r['data_fechamento'], r['hora_fechamento']),
+    openingAmount: r['valor_abertura'] != null ? Number(r['valor_abertura']) : null,
+    totalCounted: r['valor_fechamento'] != null ? Number(r['valor_fechamento']) : null,
+    operatorName: r['id_usuario_fechamento'] != null ? String(r['id_usuario_fechamento']) : null,
+  }));
+  const lastId = String(rows[rows.length - 1]!['source_id']);
+  const { persisted } = await postBatch(cfg, 'cashClosings', camelRows, lastId);
+  setCheckpoint('cashClosings', lastId);
+  return persisted;
+}
+
+async function syncCashClosingSpecies(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+  const entry = resolveReport('sync-cash-closing-species-batch')!;
+  const afterId = Number(getCheckpoint('cashClosingSpecies') ?? '0');
+  const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, afterId]);
+  if (rows.length === 0) return 0;
+  const camelRows = rows.map((r) => ({
+    sourceId: String(r['source_id']),
+    closingSourceId: String(r['closing_source_id']),
+    especie: String(r['especie'] ?? ''),
+    counted: Number(r['counted'] ?? 0),
+  }));
+  const lastId = String(rows[rows.length - 1]!['source_id']);
+  const { persisted } = await postBatch(cfg, 'cashClosingSpecies', camelRows, lastId);
+  setCheckpoint('cashClosingSpecies', lastId);
+  return persisted;
+}
+
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
   // Trava contra sobreposicao: setInterval dispara um novo tick mesmo se o anterior ainda
   // estiver rodando. Se um tick demorar mais que syncIntervalMs (rede lenta, tabela grande),
@@ -263,6 +331,15 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
         if (persisted > 0) logger.info({ table: 'payables', persisted }, 'sync tick');
       } catch (err) {
         logger.error({ err }, 'sync tick failed (payables)');
+      }
+      // D20 Conferencia de Caixa: fechamentos (pai) antes das especies (filhas resolvem FK)
+      for (const [name, fn] of [['cashClosings', syncCashClosings], ['cashClosingSpecies', syncCashClosingSpecies]] as const) {
+        try {
+          const persisted = await fn(cfg);
+          if (persisted > 0) logger.info({ table: name, persisted }, 'sync tick');
+        } catch (err) {
+          logger.error({ err }, `sync tick failed (${name})`);
+        }
       }
       try {
         const persisted = await syncReceivables(cfg);

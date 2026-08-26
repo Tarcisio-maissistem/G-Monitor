@@ -25,6 +25,7 @@ export const NAV: NavItem[] = [
   { label: 'A Pagar', path: '/contas-pagar', icon: '📤' },
   { label: 'Caixa', path: '/movimento-caixa', icon: '💼' },
   { label: 'Caixa Detalhado', path: '/caixa-detalhado', icon: '📒' },
+  { label: 'Conferência de Caixa', path: '/conferencia-caixa', icon: '🧮' },
   { label: 'Comissão', path: '/comissao', icon: '💎' },
   { label: 'Alertas Estoque', path: '/alertas-estoque', icon: '⚠️' },
   { label: 'Sugestão Compras', path: '/sugestao-compras', icon: '🛍️' },
