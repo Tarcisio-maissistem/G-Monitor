@@ -19,8 +19,8 @@ export function FinancialPosition({ from, to }: { from: string; to: string }): J
         {d && (
           <>
             <KpiRow cols={2}>
-              <KpiCard label={`Saldo projetado até ${formatBrDate(d.saldoProjetado.ate)}`} value={formatCompactBRL(saldo)} tone={saldo >= 0 ? 'emerald' : 'red'} highlight sub={`${formatBRL(saldo)} · a receber ${formatCompactBRL(d.saldoProjetado.entradas)} − a pagar ${formatCompactBRL(d.saldoProjetado.saidas)}`} />
-              <KpiCard label="Vendido a prazo (fiado)" value={formatPct(d.fiado.pct, 1)} tone={d.fiado.pct > 30 ? 'amber' : 'default'} sub={`${formatCompactBRL(d.fiado.valor)} de ${formatCompactBRL(d.fiado.totalPagamentos)} recebidos`} />
+              <KpiCard label={`Saldo projetado até ${formatBrDate(d.saldoProjetado.ate)}`} info="Quanto deve sobrar (ou faltar) no caixa até o fim do mês: saldo de hoje + contas a receber que vencem − contas a pagar que vencem. É previsão, não dinheiro na mão." value={formatCompactBRL(saldo)} tone={saldo >= 0 ? 'emerald' : 'red'} highlight sub={`${formatBRL(saldo)} · a receber ${formatCompactBRL(d.saldoProjetado.entradas)} − a pagar ${formatCompactBRL(d.saldoProjetado.saidas)}`} />
+              <KpiCard label="Vendido a prazo (fiado)" info="Parte do que foi vendido no período que ficou para receber depois (fiado/crediário). Acima de 30% o caixa fica apertado mesmo vendendo bem." value={formatPct(d.fiado.pct, 1)} tone={d.fiado.pct > 30 ? 'amber' : 'default'} sub={`${formatCompactBRL(d.fiado.valor)} de ${formatCompactBRL(d.fiado.totalPagamentos)} recebidos`} />
             </KpiRow>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Lado titulo="A receber" s={d.receber} tone="emerald" />

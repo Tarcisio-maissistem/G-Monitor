@@ -86,10 +86,10 @@ export function DashboardPage(): JSX.Element {
       {/* Totais do período — o que o dono pediu em primeiro plano */}
       <QueryState query={today}>
         <KpiRow cols={4}>
-          <KpiCard label="Vendido" value={formatCompactBRL(t?.vendido.total ?? 0)} tone="blue" highlight sub={`${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`} />
-          <KpiCard label="Recebido em caixa" value={formatCompactBRL(t?.recebidoCaixa.total ?? 0)} tone="emerald" sub={formatBRL(t?.recebidoCaixa.total ?? 0)} />
-          <KpiCard label="Contas recebidas" value={formatCompactBRL(t?.contasRecebidas.total ?? 0)} tone="emerald" sub={`${formatInt(t?.contasRecebidas.count ?? 0)} baixas`} />
-          <KpiCard label="Contas pagas" value={formatCompactBRL(t?.contasPagas.total ?? 0)} tone="red" sub={`${formatInt(t?.contasPagas.count ?? 0)} baixas`} />
+          <KpiCard label="Vendido" info="Tudo que a loja vendeu no período: pré-vendas e notas fiscais (NF-e). A NFC-e gerada a partir de uma pré-venda não conta de novo. Não é o que entrou no caixa — veja ‘Recebido em caixa’." value={formatCompactBRL(t?.vendido.total ?? 0)} tone="blue" highlight sub={`${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`} />
+          <KpiCard label="Recebido em caixa" info="Dinheiro que de fato entrou no caixa no período (dinheiro, PIX, cartão e recebimentos). Venda a prazo/fiado só entra aqui quando o cliente paga." value={formatCompactBRL(t?.recebidoCaixa.total ?? 0)} tone="emerald" sub={formatBRL(t?.recebidoCaixa.total ?? 0)} />
+          <KpiCard label="Contas recebidas" info="Contas a receber que foram baixadas (pagas pelo cliente) dentro do período, somando o valor recebido." value={formatCompactBRL(t?.contasRecebidas.total ?? 0)} tone="emerald" sub={`${formatInt(t?.contasRecebidas.count ?? 0)} baixas`} />
+          <KpiCard label="Contas pagas" info="Contas a pagar que foram baixadas (pagas a fornecedores e despesas) dentro do período." value={formatCompactBRL(t?.contasPagas.total ?? 0)} tone="red" sub={`${formatInt(t?.contasPagas.count ?? 0)} baixas`} />
         </KpiRow>
       </QueryState>
 
@@ -98,7 +98,7 @@ export function DashboardPage(): JSX.Element {
       {t && (
         <KpiRow cols={2}>
           <KpiCard
-            label="Hoje × ontem"
+            label="Hoje × ontem" info="Vendido hoje comparado com o dia de ontem. A porcentagem já vem calculada: ▲ vendeu mais, ▼ vendeu menos. Não depende do filtro de datas."
             value={formatCompactBRL(t.hojeOntem.hoje.total)}
             tone={t.hojeOntem.variacaoPct == null ? 'default' : t.hojeOntem.variacaoPct >= 0 ? 'emerald' : 'red'}
             compact
@@ -109,7 +109,7 @@ export function DashboardPage(): JSX.Element {
             }
           />
           <KpiCard
-            label="Caixa físico (contado)"
+            label="Caixa físico (contado)" info="O que o operador CONTOU ao fechar o caixa, somado no período. ‘Quebra’ é a diferença para o que o sistema esperava: negativa = faltou, positiva = sobrou. A quebra nunca altera o faturamento."
             value={formatCompactBRL(t.caixaFisico.contado)}
             tone={t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
             compact
@@ -127,10 +127,10 @@ export function DashboardPage(): JSX.Element {
           derruba a média, como no relatório antigo). */}
       {s && s.quantity > 0 && t && (
         <KpiRow cols={4}>
-          <KpiCard label="Ticket médio" value={formatBRL(s.ticket)} compact />
-          <KpiCard label="Dias trabalhados" value={formatInt(t.diasTrabalhados)} compact />
-          <KpiCard label="Média diária" value={formatCompactBRL(t.mediaDiaria)} compact sub={formatBRL(t.mediaDiaria)} />
-          <KpiCard label="Clientes únicos" value={formatInt(s.uniqueCustomers)} compact />
+          <KpiCard label="Ticket médio" info="Valor médio por venda no período (vendido ÷ quantidade de vendas)." value={formatBRL(s.ticket)} compact />
+          <KpiCard label="Dias trabalhados" info="Dias do período em que houve pelo menos uma venda. Feriado ou dia fechado não conta." value={formatInt(t.diasTrabalhados)} compact />
+          <KpiCard label="Média diária" info="Vendido no período dividido pelos dias trabalhados — mostra o ritmo real da loja sem o feriado derrubar a média." value={formatCompactBRL(t.mediaDiaria)} compact sub={formatBRL(t.mediaDiaria)} />
+          <KpiCard label="Clientes únicos" info="Quantos clientes diferentes (identificados na venda) compraram no período. Venda sem cliente informado não conta." value={formatInt(s.uniqueCustomers)} compact />
         </KpiRow>
       )}
 
