@@ -21,9 +21,25 @@ export function parseCurrency(masked: string): number {
   return parseInt(digits, 10) / 100;
 }
 
-// Formata um número como BRL (R$ 1.234,56)
-export function formatBRL(n: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+// Formata um número como BRL (R$ 1.234,56). FONTE UNICA — as 26 copias locais nas
+// paginas/componentes devem importar daqui (D18 do fluxo-caixa-dre).
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+export function formatBRL(n: number | null | undefined): string {
+  return BRL.format(n ?? 0);
+}
+
+// Versao curta pra caber em celula/KPI estreito no celular (ex: "R$ 1,2 mil", "R$ 348 mil").
+// Movida de FinanceCalendar.tsx (era local) pra servir KpiCard compact e o calendario.
+const BRL_COMPACT = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 });
+export function formatCompactBRL(n: number | null | undefined): string {
+  return BRL_COMPACT.format(n ?? 0);
+}
+
+// Percentual ja em escala 0-100 (ex: 12.345 -> "12,3%"). null vira "—" (DRE usa pct:null
+// quando o denominador e zero — nunca mostrar "0%" escondendo divisao por zero).
+export function formatPct(n: number | null | undefined, digits = 1): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `${n.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
 }
 
 // ============ PORCENTAGEM ============
@@ -122,12 +138,31 @@ export function parseBrDate(masked: string): Date | null {
   return d;
 }
 
-// Date -> "19/05/2026"
+// Date | ISO -> "19/05/2026".
+// String so-data ("2026-05-19", como o `dia` do /cashflow) e formatada em UTC de proposito:
+// `new Date('2026-05-19')` e meia-noite UTC, que no fuso do Brasil (UTC-3) vira 18/05 —
+// bug classico de "dia anterior". Datetime completo (03:00Z do GDOOR) segue no fuso local.
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 export function formatBrDate(d: Date | string | null | undefined): string {
   if (!d) return '';
+  if (typeof d === 'string' && DATE_ONLY.test(d)) {
+    return new Date(`${d}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+  }
   const date = typeof d === 'string' ? new Date(d) : d;
   if (isNaN(date.getTime())) return '';
   return date.toLocaleDateString('pt-BR');
+}
+
+// Date | ISO -> "19/05" (eixo de grafico e card estreito; mesma regra de so-data acima).
+export function formatBrDayMonth(d: Date | string | null | undefined): string {
+  if (!d) return '';
+  const opts: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit' };
+  if (typeof d === 'string' && DATE_ONLY.test(d)) {
+    return new Date(`${d}T12:00:00Z`).toLocaleDateString('pt-BR', { ...opts, timeZone: 'UTC' });
+  }
+  const date = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('pt-BR', opts);
 }
 
 // Date -> "19/05/2026 14:30"

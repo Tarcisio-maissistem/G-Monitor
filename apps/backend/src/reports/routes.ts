@@ -6,6 +6,8 @@ import { prisma } from '../db/prisma.js';
 import { redis } from '../db/redis.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
+import { normalizePaymentType } from './paymentType.js';
 
 // Cache curto (cache-aside) pros relatorios: cada request bate no Supabase (~180ms de RTT
 // so na ida-e-volta, sa-east-1). Achado 24/08: quase todo handler fazia a query principal
@@ -525,54 +527,117 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     };
   }));
 
-  app.get('/api/reports/dre-simplified', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
-    const query = baseFilters.parse(req.query);
+  // DRE v1 (D17, 25/08): extrato vertical com selo por linha (real|estimate|nd). Corrige o
+  // erro antigo (cancelamento subtraido de uma receita que ja nao o continha). Receita bruta
+  // = venda nao cancelada SEM filtrar processed (P2: PV/65/55 contam), excluindo naturezas que
+  // nao sao venda (Devolucao de compra, Complementar). Nunca a palavra "lucro".
+  const dreFilters = baseFilters.extend({ regime: z.enum(['caixa', 'vencimento']).default('caixa') });
+
+  app.get('/api/reports/dre-simplified', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('dre-simplified', async (req) => {
+    const query = dreFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+    const baseWhere = { tenantId, ...(storeId ? { storeId } : {}) };
 
-    const dateWhere = { saleDate: { gte: from, lte: to } };
-    const baseWhere = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) };
-
-    const [active, cancelled, payments, meta] = await Promise.all([
-      prisma.sale.aggregate({
-        where: { ...baseWhere, ...dateWhere, cancelled: false },
+    const [naturezas, cancelled, naoProc, payments, cmvRows, despesasFornecedor, despesasAgg, meta] = await Promise.all([
+      prisma.sale.groupBy({
+        by: ['natureza', 'modelo'],
+        where: { ...baseWhere, saleDate: { gte: from, lte: to }, cancelled: false },
         _sum: { totalValue: true },
         _count: true,
       }),
-      prisma.sale.aggregate({
-        where: { ...baseWhere, ...dateWhere, cancelled: true },
-        _sum: { totalValue: true },
-        _count: true,
-      }),
+      prisma.sale.aggregate({ where: { ...baseWhere, saleDate: { gte: from, lte: to }, cancelled: true }, _sum: { totalValue: true }, _count: true }),
+      prisma.sale.aggregate({ where: { ...baseWhere, saleDate: { gte: from, lte: to }, cancelled: false, processed: false }, _sum: { totalValue: true }, _count: true }),
       prisma.payment.groupBy({
         by: ['paymentType'],
-        where: { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+        where: { ...baseWhere, paymentDate: { gte: from, lte: to } },
         _sum: { value: true },
         _count: true,
         orderBy: { _sum: { value: 'desc' } },
       }),
-      getFreshnessMeta(req.user!.tenantId, storeId),
+      // CMV aproximado = qtd x custo ATUAL do produto (products hoje esta vazio — agente nao
+      // sincroniza). coverage = % da qtd vendida que tem custo cadastrado; UI so mostra >= 50%.
+      prisma.$queryRaw<{ cmv: unknown; qtd_com_custo: unknown; qtd_total: unknown }[]>(Prisma.sql`
+        SELECT COALESCE(SUM(CASE WHEN p."costPrice" IS NOT NULL THEN i."quantity" * p."costPrice" END), 0) AS cmv,
+               COALESCE(SUM(CASE WHEN p."costPrice" IS NOT NULL THEN i."quantity" END), 0) AS qtd_com_custo,
+               COALESCE(SUM(i."quantity"), 0) AS qtd_total
+        FROM sale_items i
+        JOIN sales s ON s.id = i."saleId"
+        LEFT JOIN products p ON p."tenantId" = i."tenantId" AND p."storeId" = i."storeId" AND p."sourceCode" = i."productCode"
+        WHERE i."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND i."storeId" = ${storeId}` : Prisma.empty}
+          AND s."cancelled" = false AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`),
+      prisma.payable.groupBy({
+        by: ['counterparty'],
+        where: query.regime === 'caixa'
+          ? { ...baseWhere, cancelled: false, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
+          : { ...baseWhere, cancelled: false, dueDate: { gte: from, lte: to } },
+        // soma os dois sempre (o tipo do groupBy vira uniao se o _sum for condicional) e
+        // escolhe em JS conforme o regime
+        _sum: { paidValue: true, value: true },
+        orderBy: query.regime === 'caixa' ? { _sum: { paidValue: 'desc' } } : { _sum: { value: 'desc' } },
+        take: 10,
+      }),
+      prisma.payable.aggregate({
+        where: query.regime === 'caixa'
+          ? { ...baseWhere, cancelled: false, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
+          : { ...baseWhere, cancelled: false, dueDate: { gte: from, lte: to } },
+        _sum: { paidValue: true, value: true },
+      }),
+      getFreshnessMeta(tenantId, storeId),
     ]);
 
-    const gross = Number(active._sum.totalValue ?? 0);
-    const cancellations = Number(cancelled._sum.totalValue ?? 0);
+    const isVenda = (n: string | null) => !(n ?? '').startsWith('Devolu') && !(n ?? '').startsWith('Complementar');
+    const receitaBruta = naturezas.filter((g) => isVenda(g.natureza)).reduce((s, g) => s + Number(g._sum.totalValue ?? 0), 0);
+    const receitaPorModelo: Record<string, number> = {};
+    for (const g of naturezas) {
+      if (!isVenda(g.natureza)) continue;
+      const m = g.modelo ?? '?';
+      receitaPorModelo[m] = (receitaPorModelo[m] ?? 0) + Number(g._sum.totalValue ?? 0);
+    }
+    const despesas = query.regime === 'caixa' ? Number(despesasAgg._sum.paidValue ?? 0) : Number(despesasAgg._sum.value ?? 0);
+    const cmvRow = cmvRows[0];
+    const qtdTotal = Number(cmvRow?.qtd_total ?? 0);
+    const cmvCoverage = qtdTotal > 0 ? (Number(cmvRow?.qtd_com_custo ?? 0) / qtdTotal) * 100 : null;
+    const cmvOk = cmvCoverage !== null && cmvCoverage >= 50;
+    const cmv = cmvOk ? Number(cmvRow?.cmv ?? 0) : null;
+    const receitaLiquida = receitaBruta; // descontos/devolucoes N/D
+    const margemBruta = cmv !== null ? receitaLiquida - cmv : null;
+    const resultado = receitaLiquida - despesas - (cmv ?? 0);
+    const pct = (v: number | null) => (v === null || receitaBruta <= 0 ? null : (v / receitaBruta) * 100);
+    const despesaNote = query.regime === 'caixa' ? 'so contas a pagar baixadas no periodo (sangria/despesa de caixa nao sincronizam)' : 'contas a pagar por vencimento no periodo (nao e competencia: sem data de emissao)';
 
+    const lines = [
+      { key: 'receita_bruta', label: 'Receita bruta', value: receitaBruta, pct: pct(receitaBruta), status: 'real', note: 'vendas nao canceladas (PV, NFC-e e NF-e)' },
+      { key: 'descontos', label: '(-) Descontos', value: null, pct: null, status: 'nd', note: 'nao sincronizado' },
+      { key: 'devolucoes', label: '(-) Devolucoes', value: null, pct: null, status: 'nd', note: 'nao mapeado' },
+      { key: 'receita_liquida', label: '= Receita liquida', value: receitaLiquida, pct: pct(receitaLiquida), status: 'estimate', note: 'igual a bruta (descontos/devolucoes N/D)' },
+      { key: 'cmv', label: '(-) CMV', value: cmv, pct: pct(cmv), status: cmvOk ? 'estimate' : 'nd', note: cmvOk ? `custo atual x qtd (${cmvCoverage!.toFixed(0)}% dos itens com custo)` : 'custo de produto nao sincronizado' },
+      { key: 'margem_bruta', label: '= Margem bruta', value: margemBruta, pct: pct(margemBruta), status: cmvOk ? 'estimate' : 'nd', note: cmvOk ? null : 'depende do CMV' },
+      { key: 'despesas', label: '(-) Despesas', value: despesas, pct: pct(despesas), status: 'estimate', note: despesaNote },
+      { key: 'impostos', label: '(-) Impostos', value: null, pct: null, status: 'nd', note: 'nao sincronizado' },
+      { key: 'resultado', label: '= Resultado aproximado', value: resultado, pct: pct(resultado), status: 'estimate', note: 'receita - despesas' + (cmvOk ? ' - CMV' : ' (sem CMV, sem impostos)') },
+    ];
+
+    const despTotal = despesasFornecedor.reduce((s, g) => s + Number((query.regime === 'caixa' ? g._sum.paidValue : g._sum.value) ?? 0), 0);
     return {
-      data: {
-        grossRevenue: gross,
-        cancellations,
-        netRevenue: gross - cancellations,
-        salesCount: active._count,
-        cancelledCount: cancelled._count,
-        payments: payments.map((p) => ({
-          type: p.paymentType,
-          total: Number(p._sum.value ?? 0),
-          count: p._count,
-        })),
+      regime: query.regime,
+      lines,
+      memo: {
+        cancelamentos: { value: Number(cancelled._sum.totalValue ?? 0), count: cancelled._count },
+        naoProcessadas: { value: Number(naoProc._sum.totalValue ?? 0), count: naoProc._count },
+        naturezas: naturezas.map((g) => ({ natureza: g.natureza, modelo: g.modelo, count: g._count, value: Number(g._sum.totalValue ?? 0) })),
+        cmvCoverage,
+        receitaPorModelo,
       },
+      despesasPorFornecedor: despesasFornecedor.map((g) => {
+        const v = Number((query.regime === 'caixa' ? g._sum.paidValue : g._sum.value) ?? 0);
+        return { label: g.counterparty ?? '(sem fornecedor)', value: v, percent: despTotal > 0 ? (v / despTotal) * 100 : 0 };
+      }),
+      payments: payments.map((p) => ({ type: p.paymentType, total: Number(p._sum.value ?? 0), count: p._count })),
       meta,
     };
-  });
+  }));
 
   app.get('/api/reports/stockout', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
     const query = baseFilters.parse(req.query);
@@ -784,9 +849,11 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     ]);
 
     const breakdown = { dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 };
-    const TYPE_MAP: Record<string, keyof typeof breakdown> = { DINHEIRO: 'dinheiro', CARTAO: 'cartao', PIX: 'pix', CREDIARIO: 'crediario' };
+    // normalizePaymentType (Fase 0, 25/08): o mapa antigo de 4 literais exatos jogava
+    // 'CARTãO CRéDITO', 'PAGAMENTO INSTANTâNEO (PIX)' e crediario reais em 'outros'.
     for (const g of paymentGroups) {
-      const key = TYPE_MAP[g.paymentType] ?? 'outros';
+      const key = normalizePaymentType(g.paymentType);
+      if (!key) continue; // 'SEM PAGAMENTO'
       breakdown[key] += Number(g._sum.value ?? 0);
     }
 
@@ -930,7 +997,6 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     type DayRow = { dia: string; qtd: number; canceladas: number; total: number; ticket: number; dinheiro: number; cartao: number; pix: number; crediario: number; outros: number };
     const dayKey = (d: Date) => d.toISOString().slice(0, 10);
-    const TYPE_MAP: Record<string, keyof DayRow> = { DINHEIRO: 'dinheiro', CARTAO: 'cartao', PIX: 'pix', CREDIARIO: 'crediario' };
     const dayMap = new Map<string, DayRow>();
     const emptyDay = (dia: string): DayRow => ({ dia, qtd: 0, canceladas: 0, total: 0, ticket: 0, dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 });
 
@@ -944,7 +1010,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       const key = dayKey(r.day);
       if (!dayMap.has(key)) dayMap.set(key, emptyDay(key));
       const row = dayMap.get(key)!;
-      const field = TYPE_MAP[r.paymentType] ?? 'outros';
+      const field: keyof DayRow = normalizePaymentType(r.paymentType) ?? 'outros';
       (row[field] as number) += Number(r.total);
     }
 
@@ -993,26 +1059,55 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
 
-    const rows = await prisma.$queryRaw<{ day: Date; entradas: unknown; movimentos: bigint }[]>(
-      storeId
-        ? Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, SUM("value") AS entradas, COUNT(*) AS movimentos
-            FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1`
-        : Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, SUM("value") AS entradas, COUNT(*) AS movimentos
-            FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1`,
-    );
+    // D16 (25/08): passa a usar buildCashflow — saidas deixam de ser 0 hardcoded (viram contas
+    // a pagar baixadas) e crediario sai das entradas de venda (P1). MUDA os numeros que a tela
+    // Caixa Detalhado ja mostrava; release note obrigatoria.
+    const cf = await buildCashflow(req.user!.tenantId, storeId, from, to, 'day');
+    const data = cf.data.map((r) => ({ dia: r.dia, entradas: r.entradas, saidas: r.saidas, movimentos: r.movimentos, saldoDia: r.saldoDia, saldoAcumulado: r.saldoAcumulado }));
+    return { data, totals: { entradas: cf.totals.entradas, saidas: cf.totals.saidas, saldoFinal: cf.totals.variacao }, quality: cf.quality };
+  }));
 
-    const sorted = rows
-      .map((r) => ({ dia: r.day.toISOString().slice(0, 10), entradas: Number(r.entradas), saidas: 0, movimentos: Number(r.movimentos) }))
-      .sort((a, b) => a.dia.localeCompare(b.dia));
+  // ─── Fluxo de Caixa (D16, 25/08) ───────────────────────────────────────────
+  const cashflowFilters = baseFilters.extend({ granularity: z.enum(['day', 'week', 'month']).optional() });
 
-    let acumulado = 0;
-    const data = sorted.map((r) => {
-      const saldoDia = r.entradas - r.saidas;
-      acumulado += saldoDia;
-      return { ...r, saldoDia, saldoAcumulado: acumulado };
-    });
+  app.get('/api/reports/cashflow', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cashflow', async (req) => {
+    const query = cashflowFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const granularity: Granularity = pickGranularity(from, to, query.granularity);
+    const [cf, meta] = await Promise.all([buildCashflow(req.user!.tenantId, storeId, from, to, granularity), getFreshnessMeta(req.user!.tenantId, storeId)]);
+    return { data: cf.data, totals: cf.totals, quality: cf.quality, meta: { ...meta, granularity, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) } };
+  }));
 
-    return { data, totals: { entradas: data.reduce((s, d) => s + d.entradas, 0), saidas: 0, saldoFinal: acumulado } };
+  // Drill-down de UM dia: cada entrada/saida individual (toque no card do dia na tela).
+  app.get('/api/reports/cashflow/day', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = z.object({ date: z.string().date(), storeId: z.string().optional() }).parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const from = new Date(query.date + 'T00:00:00Z');
+    const to = new Date(query.date + 'T23:59:59Z');
+    const scope = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}) };
+
+    const [pays, recs, payables, meta] = await Promise.all([
+      prisma.payment.findMany({ where: { ...scope, paymentDate: { gte: from, lte: to }, OR: [{ saleId: null }, { sale: { cancelled: false } }] }, select: { saleId: true, paymentType: true, value: true }, take: 200 }),
+      prisma.receivable.findMany({ where: { ...scope, cancelled: false, receivedValue: { gt: 0 }, receivedDate: { gte: from, lte: to } }, select: { counterparty: true, description: true, receivedValue: true }, take: 200 }),
+      prisma.payable.findMany({ where: { ...scope, cancelled: false, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, select: { counterparty: true, description: true, paidValue: true }, take: 200 }),
+      getFreshnessMeta(req.user!.tenantId, storeId),
+    ]);
+
+    const entradas = [
+      // P1: crediario nao entra como pagamento de venda — entra pela baixa do titulo (abaixo)
+      ...pays.map((p) => ({ tipo: 'payment' as const, forma: normalizePaymentType(p.paymentType) ?? 'outros', saleId: p.saleId, value: Number(p.value) })).filter((p) => p.forma !== 'crediario'),
+      ...recs.map((r) => ({ tipo: 'receivable' as const, counterparty: r.counterparty, description: r.description, value: Number(r.receivedValue) })),
+    ];
+    const saidas = payables.map((p) => ({ counterparty: p.counterparty, description: p.description, value: Number(p.paidValue) }));
+    return { date: query.date, entradas, saidas, totals: { entradas: entradas.reduce((s, e) => s + e.value, 0), saidas: saidas.reduce((s, e) => s + e.value, 0) }, meta };
+  });
+
+  app.get('/api/reports/cashflow-forecast', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cashflow-forecast', async (req) => {
+    const query = z.object({ days: z.coerce.number().int().refine((d) => [7, 15, 30, 60, 90].includes(d)).default(30), storeId: z.string().optional() }).parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const [fc, meta] = await Promise.all([buildForecast(req.user!.tenantId, storeId, query.days), getFreshnessMeta(req.user!.tenantId, storeId)]);
+    return { ...fc, meta };
   }));
 
   app.get('/api/reports/sales-comparison', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('sales-comparison', async (req) => {
