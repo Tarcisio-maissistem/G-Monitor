@@ -577,8 +577,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.payable.groupBy({
         by: ['counterparty'],
         where: query.regime === 'caixa'
-          ? { ...baseWhere, ...SALE_OF_RECORD, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
-          : { ...baseWhere, ...SALE_OF_RECORD, dueDate: { gte: from, lte: to } },
+          ? { ...baseWhere, cancelled: false, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
+          : { ...baseWhere, cancelled: false, dueDate: { gte: from, lte: to } },
         // soma os dois sempre (o tipo do groupBy vira uniao se o _sum for condicional) e
         // escolhe em JS conforme o regime
         _sum: { paidValue: true, value: true },
@@ -587,8 +587,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       }),
       prisma.payable.aggregate({
         where: query.regime === 'caixa'
-          ? { ...baseWhere, ...SALE_OF_RECORD, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
-          : { ...baseWhere, ...SALE_OF_RECORD, dueDate: { gte: from, lte: to } },
+          ? { ...baseWhere, cancelled: false, paidDate: { gte: from, lte: to }, paidValue: { gt: 0 } }
+          : { ...baseWhere, cancelled: false, dueDate: { gte: from, lte: to } },
         _sum: { paidValue: true, value: true },
       }),
       getFreshnessMeta(tenantId, storeId),
@@ -850,8 +850,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const [salesAgg, paymentGroups, receivablesAgg, receivablesCount, meta] = await Promise.all([
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
       prisma.payment.groupBy({ by: ['paymentType'], where: { ...scope, paymentDate: { gte: from, lte: to } }, _sum: { value: true } }),
-      prisma.receivable.aggregate({ where: { ...scope, ...SALE_OF_RECORD, dueDate: { gte: from, lte: to } }, _sum: { value: true, receivedValue: true } }),
-      prisma.receivable.count({ where: { ...scope, ...SALE_OF_RECORD, dueDate: { gte: from, lte: to } } }),
+      prisma.receivable.aggregate({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } }, _sum: { value: true, receivedValue: true } }),
+      prisma.receivable.count({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } } }),
       getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
 
@@ -1247,8 +1247,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
       // recebido de verdade em caixa no periodo = fluxo realizado (entradas), reaproveita buildCashflow
       buildCashflow(req.user!.tenantId, storeId, from, to, 'day'),
-      prisma.receivable.aggregate({ where: { ...scope, ...SALE_OF_RECORD, receivedValue: { gt: 0 }, receivedDate: { gte: from, lte: to } }, _sum: { receivedValue: true }, _count: true }),
-      prisma.payable.aggregate({ where: { ...scope, ...SALE_OF_RECORD, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, _sum: { paidValue: true }, _count: true }),
+      prisma.receivable.aggregate({ where: { ...scope, cancelled: false, receivedValue: { gt: 0 }, receivedDate: { gte: from, lte: to } }, _sum: { receivedValue: true }, _count: true }),
+      prisma.payable.aggregate({ where: { ...scope, cancelled: false, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, _sum: { paidValue: true }, _count: true }),
       getFreshnessMeta(req.user!.tenantId, storeId),
       nfceSemPvQ,
     ]);
