@@ -1,11 +1,12 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { formatBRL, formatCompactBRL, formatInt } from '../lib/masks';
-import { currentMonthRange, monthLabel } from '../lib/period';
+import { formatBRL, formatBrDate, formatCompactBRL, formatInt } from '../lib/masks';
+import { currentMonthRange, monthLabel, type DateRange } from '../lib/period';
 import type { DashTodayResponse } from '../lib/reports';
 import { buildWhatsAppResumo } from '../lib/whatsapp';
 import {
-  PageContainer, PageHeader, KpiRow, KpiCard, QueryState, CopyWhatsAppButton,
+  PageContainer, PageHeader, KpiRow, KpiCard, QueryState, CopyWhatsAppButton, DateRangeFilter,
 } from '../components/ui';
 import { AgentStatus } from '../components/dashboard/AgentStatus';
 import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
@@ -31,10 +32,16 @@ const KLASS_COLOR: Record<string, string> = { A: 'text-green-700 bg-green-50', B
 // período que interessam ao empresário (vendido / recebido / contas); depois pico de
 // horário, ranking por VENDEDOR (não caixa), formas de pagamento e curva ABC.
 export function DashboardPage(): JSX.Element {
-  const range = currentMonthRange(); // mês atual, dia 1..hoje (regra do dono 23/08)
+  // Filtro de data (pedido do dono 26/08): abre no mês atual (dia 1..hoje, regra de 23/08),
+  // mas o usuário pode escolher qualquer período — todos os blocos abaixo seguem o filtro,
+  // exceto "Horário de pico" (sempre últimos 7 dias, decisão do dono).
+  const [range, setRange] = useState<DateRange>(() => currentMonthRange());
   const { from, to } = range;
   const qs = `from=${from}&to=${to}`;
-  const mesLabel = monthLabel();
+  const padrao = currentMonthRange();
+  const ehMesAtual = padrao.from === from && padrao.to === to;
+  // rótulo do período: "agosto/2026" quando é o mês atual, senão "01/08 a 15/08"
+  const mesLabel = ehMesAtual ? monthLabel() : `${formatBrDate(from)} a ${formatBrDate(to)}`;
 
   const today = useQuery({ queryKey: ['dash-today', from, to], queryFn: () => api<DashTodayResponse>(`/api/reports/dashboard/today?${qs}`) });
   const summary = useQuery({ queryKey: ['sales-summary', from, to], queryFn: () => api<SalesSummary>(`/api/reports/sales-summary?${qs}`) });
@@ -64,6 +71,7 @@ export function DashboardPage(): JSX.Element {
         subtitle="Os números do período — vendas, caixa e contas."
         actions={<CopyWhatsAppButton text={whatsapp} disabled={!t} />}
       />
+      <DateRangeFilter value={range} onChange={setRange} />
 
       {/* Status do agente: última sincronização + botão Atualizar (no lugar do alerta seco
           de "agente offline"). Detalhes de caixa ficam na tela de Fluxo de Caixa. */}
