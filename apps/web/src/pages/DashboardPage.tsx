@@ -109,14 +109,15 @@ export function DashboardPage(): JSX.Element {
             }
           />
           <KpiCard
-            label="Caixa contábil × físico"
+            label="Caixa físico (contado)"
             value={formatCompactBRL(t.caixaFisico.contado)}
             tone={t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
             compact
+            // sub curto: no celular o card tem ~20 caracteres de largura
             sub={
               t.caixaFisico.fechamentos === 0
-                ? 'sem fechamento de caixa no período'
-                : `esperado ${formatBRL(t.caixaFisico.esperado)} · quebra ${t.caixaFisico.quebra < 0 ? '−' : '+'}${formatBRL(Math.abs(t.caixaFisico.quebra))} em ${t.caixaFisico.comQuebra} de ${t.caixaFisico.fechamentos} caixas`
+                ? 'sem fechamento no período'
+                : `quebra ${t.caixaFisico.quebra < 0 ? '−' : '+'}${formatCompactBRL(Math.abs(t.caixaFisico.quebra))} · ${t.caixaFisico.comQuebra}/${t.caixaFisico.fechamentos} caixas`
             }
           />
         </KpiRow>
