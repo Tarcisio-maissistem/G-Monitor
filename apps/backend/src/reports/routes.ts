@@ -1410,6 +1410,53 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     };
   }));
 
+  // Inadimplencia por FAIXA DE TEMPO vencido (pedido do dono 26/08: "quem deve e nao paga ha
+  // muito tempo"). Diferente do aging de financial-position (que para em "acima de 60 dias"):
+  // aqui as faixas sao mes atual / 3 / 6 meses / 1 ano / +1 ano, NAO sobrepostas, e o ranking
+  // e por TEMPO de atraso (nao por valor) - o objetivo e achar o caloteiro antigo, nao o maior.
+  app.get('/api/reports/dashboard/inadimplencia', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('inadimplencia', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+    const hoje = new Date(); hoje.setUTCHours(0, 0, 0, 0);
+    const scopeSql = storeId ? Prisma.sql`AND r."storeId" = ${storeId}` : Prisma.empty;
+    // so titulo VENCIDO e ainda em aberto (value > recebido, dueDate < hoje)
+    const whereVencido = Prisma.sql`r."tenantId" = ${tenantId} ${scopeSql} AND r."cancelled" = false AND r."value" > r."receivedValue" AND r."dueDate" < ${hoje}`;
+    const [faixasRows, piores, meta] = await Promise.all([
+      prisma.$queryRaw<{ faixa: string; titulos: bigint; devedores: bigint; valor: unknown }[]>(Prisma.sql`
+        SELECT CASE
+                 WHEN ${hoje}::date - r."dueDate"::date <= 30  THEN 'mes'
+                 WHEN ${hoje}::date - r."dueDate"::date <= 90  THEN 'tri'
+                 WHEN ${hoje}::date - r."dueDate"::date <= 180 THEN 'sem'
+                 WHEN ${hoje}::date - r."dueDate"::date <= 365 THEN 'ano'
+                 ELSE 'mais1ano' END AS faixa,
+               COUNT(*) AS titulos,
+               COUNT(DISTINCT COALESCE(NULLIF(TRIM(r."counterparty"), ''), '(sem nome)')) AS devedores,
+               COALESCE(SUM(r."value" - r."receivedValue"), 0) AS valor
+        FROM receivables r WHERE ${whereVencido} GROUP BY 1`),
+      // ranking por TEMPO de atraso: MIN(dueDate) = titulo mais antigo do devedor
+      prisma.$queryRaw<{ nome: string | null; titulos: bigint; saldo: unknown; dias: number; desde: Date }[]>(Prisma.sql`
+        SELECT COALESCE(NULLIF(TRIM(r."counterparty"), ''), '(sem nome)') AS nome,
+               COUNT(*) AS titulos, COALESCE(SUM(r."value" - r."receivedValue"), 0) AS saldo,
+               (${hoje}::date - MIN(r."dueDate")::date) AS dias, MIN(r."dueDate") AS desde
+        FROM receivables r WHERE ${whereVencido}
+        GROUP BY 1 ORDER BY dias DESC, saldo DESC LIMIT 25`),
+      getFreshnessMeta(tenantId, storeId),
+    ]);
+    const ORDEM = ['mes', 'tri', 'sem', 'ano', 'mais1ano'] as const;
+    const faixas = ORDEM.map((f) => {
+      const r = faixasRows.find((x) => x.faixa === f);
+      return { faixa: f, titulos: r ? Number(r.titulos) : 0, devedores: r ? Number(r.devedores) : 0, valor: r ? Number(r.valor) : 0 };
+    });
+    const total = faixas.reduce((a, f) => ({ titulos: a.titulos + f.titulos, valor: a.valor + f.valor }), { titulos: 0, valor: 0 });
+    return {
+      faixas,
+      total,
+      piores: piores.map((p) => ({ nome: p.nome ?? '(sem nome)', titulos: Number(p.titulos), saldo: Number(p.saldo), diasAtraso: Number(p.dias), vencimentoMaisAntigo: p.desde.toISOString().slice(0, 10) })),
+      meta,
+    };
+  }));
+
   // ─── Conferencia de Caixa (D20, 26/08) ─────────────────────────────────────────────
   // ESPERADO = registrado no expediente (payments kind venda/recebimento do PDV + fundo de
   // troco + suprimento - sangria). CONTADO = FECHAMENTO_CAIXA_ESPECIES (operador). QUEBRA =
