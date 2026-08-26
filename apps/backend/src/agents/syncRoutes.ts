@@ -17,6 +17,7 @@ const syncBatchSchema = z.object({
     'customers',
     'products',
     'cashClosings',
+    'cashClosingSpecies',
     'payables',
     'receivables',
   ]),
@@ -159,7 +160,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
 
         persisted = await bulkUpsert(
           'payments',
-          ['tenantId', 'storeId', 'sourceId', 'saleId', 'paymentDate', 'paymentType', 'especie', 'value', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId', 'saleId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
@@ -170,6 +171,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             paymentType: String(r.paymentType ?? 'OUTROS'),
             especie: r.especie ? String(r.especie) : null,
             value: Number(r.value ?? 0),
+            kind: r.kind ? String(r.kind) : null, // null = agente antigo (tratar como venda)
             createdAt: new Date(),
           })),
         );
@@ -218,7 +220,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
       case 'cashClosings':
         persisted = await bulkUpsert(
           'cash_closings',
-          ['tenantId', 'storeId', 'sourceId', 'openedAt', 'closedAt', 'operatorName', 'totalExpected', 'totalCounted', 'difference', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId', 'openedAt', 'closedAt', 'operatorName', 'totalExpected', 'totalCounted', 'difference', 'pdv', 'openingAmount', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
@@ -230,10 +232,44 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             totalExpected: r.totalExpected != null ? Number(r.totalExpected) : null,
             totalCounted: r.totalCounted != null ? Number(r.totalCounted) : null,
             difference: r.difference != null ? Number(r.difference) : null,
+            pdv: r.pdv != null ? String(r.pdv) : null,
+            openingAmount: r.openingAmount != null ? Number(r.openingAmount) : null,
             createdAt: new Date(),
           })),
         );
         break;
+
+      case 'cashClosingSpecies': {
+        // resolve FK pro fechamento pai (mesmo padrao de saleItems -> sales)
+        const closingSourceIds = [...new Set(body.rows.map((r) => String(r.closingSourceId)).filter(Boolean))];
+        const parents = await prismaSync.cashClosing.findMany({
+          where: { tenantId: ctx.tenantId, storeId: ctx.storeId, sourceId: { in: closingSourceIds } },
+          select: { id: true, sourceId: true },
+        });
+        const closingMap = new Map(parents.map((c) => [c.sourceId, c.id]));
+        const rows = body.rows
+          .map((r) => {
+            const closingId = closingMap.get(String(r.closingSourceId));
+            if (!closingId) return null; // pai ainda nao sincronizado — proximo tick reenvia
+            return {
+              tenantId: ctx.tenantId,
+              storeId: ctx.storeId,
+              closingId,
+              closingSourceId: String(r.closingSourceId),
+              sourceId: String(r.sourceId),
+              especie: String(r.especie ?? ''),
+              counted: Number(r.counted ?? 0),
+            };
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== null);
+        persisted = await bulkUpsert(
+          'cash_closing_species',
+          ['tenantId', 'storeId', 'closingId', 'closingSourceId', 'sourceId', 'especie', 'counted'],
+          ['tenantId', 'storeId', 'sourceId'],
+          rows,
+        );
+        break;
+      }
 
       case 'payables':
         persisted = await bulkUpsert(

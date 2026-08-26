@@ -67,6 +67,11 @@ export function DashboardPage(): JSX.Element {
       {/* Status do agente: última sincronização + botão Atualizar (no lugar do alerta seco
           de "agente offline"). Detalhes de caixa ficam na tela de Fluxo de Caixa. */}
       <AgentStatus meta={today.data?.meta} />
+      {t && t.nfceSemPv.count > 0 && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-lg text-sm">
+          ⚠ {t.nfceSemPv.count} NFC-e emitida{t.nfceSemPv.count > 1 ? 's' : ''} direto no caixa, sem passar pela pré-venda ({formatBRL(t.nfceSemPv.total)}). Já está no faturamento — mas não deveria acontecer.
+        </div>
+      )}
 
       {/* Totais do período — o que o dono pediu em primeiro plano */}
       <QueryState query={today}>

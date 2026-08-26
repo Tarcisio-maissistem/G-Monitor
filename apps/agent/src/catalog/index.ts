@@ -96,7 +96,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
              UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
-             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO
       FROM MOV_OPERADORES M
       LEFT JOIN (
         SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
@@ -168,6 +168,31 @@ export const CATALOG: Record<string, CatalogEntry> = {
       FROM CONTAS_RECEBER C
       WHERE C.ID > ?
       ORDER BY C.ID ASC
+    `,
+  },
+  // FECHAMENTO_CAIXA / FECHAMENTO_CAIXA_ESPECIES — confirmadas no Firebird do piloto 26/08
+  // (D20, Conferencia de Caixa). DATA+HORA separados no GDOOR: combinamos no agente.
+  'sync-cash-closings-batch': {
+    id: 'sync-cash-closings-batch',
+    description: 'Pagina de fechamentos de caixa (FECHAMENTO_CAIXA) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? F.ID AS SOURCE_ID, F.NUM_PDV AS PDV, F.DATA_ABERTURA, F.HORA_ABERTURA, F.VALOR_ABERTURA,
+             F.DATA_FECHAMENTO, F.HORA_FECHAMENTO, F.VALOR_FECHAMENTO, F.ID_USUARIO_FECHAMENTO
+      FROM FECHAMENTO_CAIXA F
+      WHERE F.ID > ?
+      ORDER BY F.ID ASC
+    `,
+  },
+  'sync-cash-closing-species-batch': {
+    id: 'sync-cash-closing-species-batch',
+    description: 'Pagina de especies contadas no fechamento (FECHAMENTO_CAIXA_ESPECIES)',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? E.ID AS SOURCE_ID, E.ID_FECHAMENTO_CAIXA AS CLOSING_SOURCE_ID, E.ESPECIE, E.VALOR AS COUNTED
+      FROM FECHAMENTO_CAIXA_ESPECIES E
+      WHERE E.ID > ?
+      ORDER BY E.ID ASC
     `,
   },
   'ping-db': {

@@ -79,14 +79,15 @@ export async function fetchCashflowSources(
   to: Date,
 ): Promise<{ payments: PaymentAgg[]; receivables: DayAgg[]; payables: DayAgg[] }> {
   const [paymentRows, receivableRows, payableRows] = await Promise.all([
-    prisma.$queryRaw<{ day: Date; paymentType: string; avulso: boolean; total: unknown; count: bigint }[]>(Prisma.sql`
-      SELECT date_trunc('day', p."paymentDate") AS day, p."paymentType", (p."saleId" IS NULL) AS avulso,
+    // kind (P5, 26/08): sangria/suprimento sao movimento de caixa, nao venda — vem separados.
+    prisma.$queryRaw<{ day: Date; paymentType: string; avulso: boolean; kind: string | null; total: unknown; count: bigint }[]>(Prisma.sql`
+      SELECT date_trunc('day', p."paymentDate") AS day, p."paymentType", (p."saleId" IS NULL) AS avulso, p."kind",
              SUM(p."value") AS total, COUNT(*) AS count
       FROM payments p LEFT JOIN sales s ON s.id = p."saleId"
       WHERE p."tenantId" = ${tenantId} ${storeSql('p', storeId)}
         AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
         AND (p."saleId" IS NULL OR s."cancelled" = false)
-      GROUP BY 1, 2, 3`),
+      GROUP BY 1, 2, 3, 4`),
     prisma.$queryRaw<RawDayAgg[]>(Prisma.sql`
       SELECT date_trunc('day', r."receivedDate") AS day, SUM(r."receivedValue") AS total, COUNT(*) AS count
       FROM receivables r
@@ -104,7 +105,7 @@ export async function fetchCashflowSources(
   ]);
 
   return {
-    payments: paymentRows.map((r) => ({ day: toDayKey(r.day), paymentType: r.paymentType, avulso: r.avulso, total: Number(r.total), count: Number(r.count) })),
+    payments: paymentRows.map((r) => ({ day: toDayKey(r.day), paymentType: r.paymentType, avulso: r.avulso, kind: r.kind, total: Number(r.total), count: Number(r.count) })),
     receivables: receivableRows.map(toDayAgg),
     payables: payableRows.map(toDayAgg),
   };

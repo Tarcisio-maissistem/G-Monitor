@@ -18,6 +18,8 @@ export interface CashflowDetalhe {
   avulsos: number; // Payment sem saleId — estimativa
   crediarioRecebido: number; // Receivable baixado (P1)
   contasPagas: number; // Payable baixado
+  sangrias: number; // P5: retirada do caixa — saida
+  suprimentos: number; // P5: aporte de troco — informativo, nao receita
 }
 
 export interface CashflowRow {
@@ -166,6 +168,7 @@ export interface DashTodayResponse {
   recebidoCaixa: { total: number };
   contasRecebidas: { total: number; count: number };
   contasPagas: { total: number; count: number };
+  nfceSemPv: { count: number; total: number }; // P4: NFC-e direta sem pre-venda (anomalia)
   quality: CashflowQuality;
   meta: FreshnessMeta;
 }
@@ -184,4 +187,21 @@ export interface SellerRow { seller: string | null; vendas: number; total: numbe
 export interface SellerRankingResponse {
   data: SellerRow[];
   cobertura: number; // 0-1: fracao do faturamento com vendedor identificado
+}
+
+// ---------- GET /api/reports/cash-conference (D20) ----------
+export interface CashConferenceForma { forma: string; esperado: number; contado: number; quebra: number }
+export interface CashConferenceClosing {
+  id: string; dia: string; pdv: string | null; operador: string | null;
+  abertura: string; fechamento: string | null;
+  fundoTroco: number | null; sangrias: number; suprimentos: number;
+  esperado: number; contado: number; quebra: number; // quebra = contado - esperado (negativo = falta)
+  porForma: CashConferenceForma[];
+}
+export interface CashConferenceResponse {
+  closings: CashConferenceClosing[];
+  totals: { esperado: number; contado: number; quebra: number };
+  fechamentosComQuebra: number;
+  avisos: string[];
+  meta: FreshnessMeta;
 }
