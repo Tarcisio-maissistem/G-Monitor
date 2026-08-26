@@ -65,3 +65,18 @@ body {
 :root[data-theme='light'] .hover\:bg-slate-50:hover { background-color: #efe9dc !important; }
 :root[data-theme='light'] .border-slate-200 { border-color: #ddd5c4 !important; }
 :root[data-theme='light'] .border { border-color: #e0d8c8; }
+
+/* ─── Marca GDOOR = laranja (26/08) ───────────────────────────────────────────
+   Aplica laranja nos elementos de MARCA/ACAO (botoes primarios, item ativo do menu,
+   links de acao, titulo) sem recolorir os graficos (que usam cor inline no TSX, nao
+   estas classes) — assim o dado continua legivel e a identidade fica laranja. Vale
+   nos dois temas. */
+.bg-blue-600 { background-color: #ea580c !important; }
+.hover\:bg-blue-700:hover { background-color: #c2410c !important; }
+.bg-blue-500 { background-color: #f97316 !important; }        /* barras de progresso (formas de pgto, ranking) */
+.text-blue-600 { color: #ea580c !important; }                /* links de acao ("ver mais", "Usuarios") */
+.hover\:text-blue-800:hover { color: #9a3412 !important; }
+.border-blue-500 { border-color: #f97316 !important; }        /* item ativo da sidebar */
+.focus\:ring-blue-500:focus { --tw-ring-color: #f97316 !important; }
+.gm-brand { color: #f97316; }
+:root[data-theme='dark'] .text-blue-600 { color: #fb923c !important; }

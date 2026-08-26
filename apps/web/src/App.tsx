@@ -3,6 +3,7 @@ import { useAuthStore } from './stores/authStore';
 import { useRoute, matchRoute } from './lib/router';
 import { refreshSession } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
+import { EmpresaSelectPage } from './pages/EmpresaSelectPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContasPagarPage } from './pages/ContasPagarPage';
 import { ContasReceberPage } from './pages/ContasReceberPage';
@@ -38,7 +39,8 @@ const COMING_SOON: Record<string, string> = {
 
 export function App(): JSX.Element {
   const user = useAuthStore((s) => s.user);
-  const login = useAuthStore((s) => s.login);
+  const restoreSession = useAuthStore((s) => s.restoreSession);
+  const promptStorePick = useAuthStore((s) => s.promptStorePick);
   const { path } = useRoute();
   const [bootstrapping, setBootstrapping] = useState(true);
 
@@ -50,7 +52,8 @@ export function App(): JSX.Element {
     let cancelled = false;
     refreshSession().then((res) => {
       if (cancelled) return;
-      if (res) login(res.accessToken, res.user, res.tenant.id, res.tenant.name);
+      // restoreSession (nao login): F5 nao dispara a tela de selecao de estabelecimento
+      if (res) restoreSession(res.accessToken, res.user, res.tenant.id, res.tenant.name);
       setBootstrapping(false);
     });
     return () => {
@@ -69,7 +72,13 @@ export function App(): JSX.Element {
 
   return (
     <>
-      {!user ? <LoginPage /> : <AppShell>{renderPage(path, user.isSuperAdmin === true)}</AppShell>}
+      {!user ? (
+        <LoginPage />
+      ) : promptStorePick ? (
+        <EmpresaSelectPage />
+      ) : (
+        <AppShell>{renderPage(path, user.isSuperAdmin === true)}</AppShell>
+      )}
       {/* Montados uma vez aqui — achado 24/08: existiam mas nunca eram renderizados em
           lugar nenhum, entao os toasts de sucesso/erro (Empresas, Usuarios) e as
           confirmacoes de exclusao nunca apareciam de verdade na tela. */}
