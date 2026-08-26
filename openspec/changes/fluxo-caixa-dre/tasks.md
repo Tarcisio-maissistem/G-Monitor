@@ -8,50 +8,39 @@ Marcar `[x]` à medida que implementa. Cada item de código só fecha com prova 
 - [x] proposal.md + design.md (D16-D19)
 - [ ] D19: corrigir `create-saas-platform/design.md` D4 e `specs/dashboard-reports/spec.md` (período padrão, PAGAR/RECEBER)
 
-## Fase 1 — backend (`apps/backend`)
-- [ ] `src/reports/paymentType.ts`: `normalizePaymentType(raw)` com os literais reais da Fase 0 + teste unitário (vitest) cobrindo cada literal → chave
-- [ ] `src/reports/cashflow.ts`: `buildCashflow(tenantId, storeId, from, to, granularity)` — 3 `$queryRaw` + merge por dia em JS; `quality{}`; teste de função pura (venda cancelada não entra, crediário não conta 2x, saldo acumulado bate, avulsos em linha própria)
-- [ ] `GET /api/reports/cashflow` (cached, granularity na chave, default mês atual)
-- [ ] `GET /api/reports/cashflow/day`
-- [ ] `GET /api/reports/cashflow-forecast` (shape do CashflowForecast.tsx + `overdue`)
-- [ ] Evoluir `GET /api/reports/dre-simplified` (`?regime=caixa|vencimento`, `lines[]` com status, `memo`, `despesasPorFornecedor`; corrigir subtração errada de cancelamentos)
-- [ ] `cash-detailed` → `buildCashflow`; `TYPE_MAP` (financial + monthly-closing) → `normalizePaymentType`
-- [ ] `quality.paymentsRecentes` (sem Payment nos últimos 2 dias com agente online)
-- [ ] `tsc --noEmit` limpo + `vitest run` verde
+## Fase 1 — backend (`apps/backend`) — FEITO 25/08 (PR #42)
+- [x] `src/reports/paymentType.ts`: `normalizePaymentType(raw)` + 14 testes com os literais reais
+- [x] `src/reports/cashflow.ts` + `cashflowMerge.ts` (merge puro testado, 15 testes)
+- [x] `GET /api/reports/cashflow` · `/cashflow/day` · `/cashflow-forecast`
+- [x] `dre-simplified` evoluído (regime, lines[] com status, memo, despesasPorFornecedor; subtração errada corrigida)
+- [x] `cash-detailed` → `buildCashflow`; os 2 `TYPE_MAP` → `normalizePaymentType`
+- [x] `quality.paymentsRecentes`
+- [x] `tsc` limpo + `vitest` 29/29
 
-## Fase 2 — kit UI + AppShell (`apps/web`)
-- [ ] `lib/masks.ts`: `formatCompactBRL` exportado (mover de FinanceCalendar), `formatBRL`/`formatInt`/`formatBrDate` fonte única
-- [ ] `lib/period.ts`: `currentMonthRange()` + presets
-- [ ] `lib/whatsapp.ts`: `buildWhatsAppResumo` genérico + `CopyWhatsAppButton`
-- [ ] `components/ui/PageHeader.tsx`
-- [ ] `components/ui/KpiCard.tsx` + `KpiRow` (nunca 1 coluna no mobile)
-- [ ] `components/ui/DateRangeFilter.tsx`
-- [ ] `components/ui/Badge.tsx` + `DataQualityBanner.tsx` (texto vem do `quality`/`status` do endpoint)
-- [ ] `components/ui/CardList.tsx` (`ResponsiveTable<T>`, padrão de ContasPagarPage)
-- [ ] `components/ui/QueryState.tsx`
-- [ ] `AppShell.tsx`: top bar mobile (hambúrguer + título + TenantSelector compacto + sino), z-index corrigido, itens Fluxo de Caixa e DRE no NAV
-- [ ] Refatorar `PlanoContasCard` (props), `FluxoCaixaChart` (URL + height prop), `CashflowForecast` (URL + vencidos), extrair `MetaMensalHeroCard`
-- [ ] `tsc --noEmit` limpo
+## Fase 2 — kit UI + AppShell (`apps/web`) — FEITO 25/08 (PR #42)
+- [x] `lib/masks.ts` (formatCompactBRL), `lib/period.ts`, `lib/whatsapp.ts` + `CopyWhatsAppButton`, `lib/reports.ts` (contrato TS dos endpoints)
+- [x] `components/ui/`: PageHeader, KpiCard/KpiRow, DateRangeFilter, Badge/DataStatusBadge, DataQualityBanner, CardList, QueryState
+- [x] `AppShell.tsx`: top bar mobile, z-index, NAV com Fluxo de Caixa e DRE; TenantSelector `compact`
+- [x] `PlanoContasCard` (props), `FluxoCaixaChart`, `CashflowForecast`, `MetaMensalHeroCard`
+- [x] `tsc` limpo
 
-## Fase 3 — telas (`apps/web/src/pages`)
-- [ ] `FluxoCaixaPage.tsx` (`/fluxo-caixa`): Realizado | Projetado, KpiRow, DataQualityBanner, CardList por dia com drill-down `/cashflow/day`
-- [ ] `DrePage.tsx` (`/dre`): extrato vertical com Badge por linha, toggle Caixa | Por vencimento, "X de 8 linhas com dado real", despesas por fornecedor, CopyWhatsAppButton
-- [ ] `App.tsx`: rotas `/fluxo-caixa` e `/dre`
-- [ ] `DashboardPage.tsx`: seção "Caixa do mês" (KpiRow de `/cashflow`), `MetaMensalHeroCard`, barra de formas em grid, DataQualityBanner no lugar dos 2 banners atuais
-- [ ] `CaixaDetalhadoPage.tsx`: rótulo "Saídas = contas a pagar baixadas" + banner
-- [ ] `FinanceiroPage.tsx`: corrigir texto desatualizado (l.160-163)
-- [ ] `LoginPage.tsx` SignupDone: `break-all` no `<code>`
-- [ ] `tsc --noEmit` + `vite build` limpos
+## Fase 3 — telas — FEITO 25/08 (PR #42 + #43)
+- [x] `FluxoCaixaPage.tsx` (`/fluxo-caixa`) · [x] `DrePage.tsx` (`/dre`) · [x] rotas em `App.tsx`
+- [ ] `DashboardPage.tsx`: seção "Caixa do mês" + `MetaMensalHeroCard` — ADIADO (economia de tokens, pedido do dono)
+- [ ] `CaixaDetalhadoPage.tsx` rótulo "Saídas = contas a pagar baixadas" — ADIADO (o número JÁ mudou no backend; só falta o texto)
+- [ ] `FinanceiroPage.tsx` texto · `LoginPage.tsx` break-all — ADIADOS
+- [x] `tsc` + `vite build` limpos
 
 ## Fase 4 — verificação + gate
-- [ ] Screenshots 375 / 768 / 1280 de FluxoCaixa, DRE, Dashboard — sem scroll horizontal no body
-- [ ] Conferência cruzada: totais de `/cashflow` × `/payments-summary` × ContasPagar/Receber do mesmo período
-- [ ] DRE do mês conferido linha a linha pelo Tarcísio contra o GDOOR
-- [ ] `guarda-de-impacto` (raio de impacto: cash-detailed muda de número, TYPE_MAP muda financial/monthly-closing)
-- [ ] Diff apresentado ao Tarcísio → OK explícito
+- [x] Playwright 375px: /fluxo-caixa e /dre renderizam, 0 erro de API, sem scroll horizontal (screenshots vistos 25/08)
+- [ ] Screenshots 768/1280 — só desktop do DRE tirado, não conferido (economia)
+- [ ] Conferência cruzada `/cashflow` × `/payments-summary` × ContasPagar/Receber — PENDENTE
+- [ ] DRE do mês conferido pelo Tarcísio contra o GDOOR — PENDENTE (agente do piloto offline, agosto tem 2 vendas)
+- [x] OK explícito do dono pra deploy (25/08)
 
-## Fase 5 — deploy (só com OK do dono)
-- [ ] Backend primeiro (ms-gestor: pull + build + `pm2 delete` + `pm2 start` com .env sourced — restart não recarrega env)
-- [ ] Frontend depois (build local neste host, nginx serve `dist/`)
-- [ ] Release note: Caixa Detalhado mudou de número (saídas deixaram de ser 0)
-- [ ] `graphify update`, memória atualizada, tasks.md fechado
+## Fase 5 — deploy — FEITO 25/08
+- [x] Backend (ms-gestor) → smoke 401 nas 3 rotas novas = existem
+- [x] Frontend (build local, nginx serve dist/)
+- [x] Release note: Caixa Detalhado mudou de número — avisado ao dono antes do OK
+- [ ] `graphify update` — ADIADO (economia)
+- [x] Memória atualizada

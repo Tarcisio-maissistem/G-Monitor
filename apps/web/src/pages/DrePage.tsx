@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { formatBRL, formatPct } from '../lib/masks';
+import { formatBRL, formatCompactBRL, formatPct } from '../lib/masks';
 import { currentMonthRange, periodLabel, rangeQuery, type DateRange } from '../lib/period';
 import { countRealLines, type DreResponse, type DreRegime } from '../lib/reports';
 import { buildWhatsAppResumo } from '../lib/whatsapp';
@@ -56,11 +56,11 @@ export function DrePage(): JSX.Element {
           <KpiCard label="Receita bruta" value={formatBRL(receita?.value ?? 0)} tone="blue" compact sub={periodLabel(range)} />
           <KpiCard
             label="Resultado aproximado"
-            value={formatBRL(resultado?.value ?? 0)}
+            value={formatCompactBRL(resultado?.value ?? 0)}
             tone={(resultado?.value ?? 0) >= 0 ? 'emerald' : 'red'}
             compact
             highlight
-            sub={`${real.real} de ${real.total} linhas com dado real`}
+            sub={`${formatBRL(resultado?.value ?? 0)} · ${real.real} de ${real.total} linhas reais`}
             badge={<DataStatusBadge status={resultado?.status ?? 'estimate'} />}
           />
         </KpiRow>
