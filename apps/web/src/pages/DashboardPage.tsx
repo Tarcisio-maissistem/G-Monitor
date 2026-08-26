@@ -6,7 +6,7 @@ import type { DashTodayResponse } from '../lib/reports';
 import { buildWhatsAppResumo } from '../lib/whatsapp';
 import {
   PageContainer, PageHeader, KpiRow, KpiCard, QueryState,
-  DataQualityBanner, qualityToItems, metaToItems, CopyWhatsAppButton,
+  DataQualityBanner, CopyWhatsAppButton,
 } from '../components/ui';
 import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
 import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart';
@@ -64,7 +64,9 @@ export function DashboardPage(): JSX.Element {
         actions={<CopyWhatsAppButton text={whatsapp} disabled={!t} />}
       />
 
-      <DataQualityBanner items={[...qualityToItems(t?.quality), ...metaToItems(today.data?.meta)]} />
+      {/* So o alerta de agente offline/defasagem aqui — os detalhes de caixa (crediario,
+          baixa parcial, etc) ficam na tela de Fluxo de Caixa, pra nao poluir o dashboard */}
+      <DataQualityBanner meta={today.data?.meta} />
 
       {/* Totais do período — o que o dono pediu em primeiro plano */}
       <QueryState query={today}>
