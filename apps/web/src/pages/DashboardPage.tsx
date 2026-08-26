@@ -15,6 +15,7 @@ import { PeakHoursChart } from '../components/dashboard/PeakHoursChart';
 import { SellerRanking } from '../components/dashboard/SellerRanking';
 import { FinancialPosition } from '../components/dashboard/FinancialPosition';
 import { WeekdayChart } from '../components/dashboard/WeekdayChart';
+import { Inadimplencia } from '../components/dashboard/Inadimplencia';
 
 interface SalesSummary {
   data: { quantity: number; total: number; ticket: number; workingDays: number; uniqueCustomers: number };
@@ -136,6 +137,9 @@ export function DashboardPage(): JSX.Element {
 
       {/* Financeiro com previsibilidade (Parte 3 do doc do dono) */}
       <FinancialPosition from={from} to={to} />
+
+      {/* Inadimplência por tempo + quem deve há mais tempo (pedido do dono 26/08) */}
+      <Inadimplencia />
 
       <RevenueYoYChart />
 

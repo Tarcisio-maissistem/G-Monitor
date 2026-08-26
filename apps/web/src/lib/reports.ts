@@ -234,3 +234,14 @@ export interface FinancialPositionResponse {
   saldoProjetado: { entradas: number; saidas: number; saldo: number; ate: string }; // até o fim do mês
   meta: FreshnessMeta;
 }
+
+// ---------- GET /api/reports/dashboard/inadimplencia (26/08) ----------
+export type FaixaInad = 'mes' | 'tri' | 'sem' | 'ano' | 'mais1ano';
+export interface InadFaixa { faixa: FaixaInad; titulos: number; devedores: number; valor: number }
+export interface InadDevedor { nome: string; titulos: number; saldo: number; diasAtraso: number; vencimentoMaisAntigo: string }
+export interface InadimplenciaResponse {
+  faixas: InadFaixa[]; // mês / 3m / 6m / 1 ano / +1 ano — vencido, não sobreposto
+  total: { titulos: number; valor: number };
+  piores: InadDevedor[]; // ordenado por TEMPO de atraso (quem deve há mais tempo)
+  meta: FreshnessMeta;
+}
