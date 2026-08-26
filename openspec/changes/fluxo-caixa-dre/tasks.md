@@ -51,7 +51,8 @@ Marcar `[x]` à medida que implementa. Cada item de código só fecha com prova 
 - [x] CashClosing(+pdv, openingAmount) + CashClosingSpecies; syncs no agente v0.8.0; migrations aplicadas
 - [x] GET /api/reports/cash-conference + tela /conferencia-caixa (mobile-first)
 - [x] Dashboard: alerta "NFC-e sem pré-venda"
-- [ ] Instalar agente v0.8.0 no PC do dono + lojas J.Kastros; re-sync do histórico (checkpoints) pra popular saleHour/sellerName/kind/fechamentos
+- [x] Agente v0.8.0 instalado no PC do dono (26/08, remoto por SSH; 3 fixes de pkg: --no-bytecode, esbuild bundle, logger sem transport) — histórico sincronizando do zero (checkpoints novos), versão 0.8.0 no painel
+- [ ] Instalar agente v0.8.0 nas lojas J.Kastros (auto-update cuida das próximas versões)
 - [ ] Validar conferência contra loja real (banco do dono tem fechamentos zerados)
 - [x] Ranking de vendedores: ticket médio + variação vs período anterior + UPPER(TRIM) (PR #49)
 - [x] Inadimplentes + aging + % fiado + saldo projetado no dashboard — /dashboard/financial-position (PR #49)
