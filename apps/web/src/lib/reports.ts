@@ -170,9 +170,18 @@ export interface DashTodayResponse {
   contasRecebidas: { total: number; count: number };
   contasPagas: { total: number; count: number };
   nfceSemPv: { count: number; total: number }; // P4: NFC-e direta sem pre-venda (anomalia)
+  // onda 1 dos cards do Gdoor Relatorios antigo (26/08)
+  hojeOntem: { hoje: { total: number; count: number }; ontem: { total: number; count: number }; variacaoPct: number | null };
+  diasTrabalhados: number;
+  mediaDiaria: number;
+  caixaFisico: { esperado: number; contado: number; quebra: number; fechamentos: number; comQuebra: number };
   quality: CashflowQuality;
   meta: FreshnessMeta;
 }
+
+// ---------- GET /api/reports/sales-by-weekday ----------
+export interface WeekdayRow { dia: number; label: string; diasObservados: number; totalQtd: number; totalRevenue: number; mediaQtdPorDia: number; mediaRevenuePorDia: number }
+export interface WeekdayResponse { data: WeekdayRow[] }
 
 // ---------- GET /api/reports/dashboard/peak-hours ----------
 export interface PeakHourRow { hora: number; qtd: number; total: number }

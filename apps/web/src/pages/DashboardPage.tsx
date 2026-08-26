@@ -14,6 +14,7 @@ import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart
 import { PeakHoursChart } from '../components/dashboard/PeakHoursChart';
 import { SellerRanking } from '../components/dashboard/SellerRanking';
 import { FinancialPosition } from '../components/dashboard/FinancialPosition';
+import { WeekdayChart } from '../components/dashboard/WeekdayChart';
 
 interface SalesSummary {
   data: { quantity: number; total: number; ticket: number; workingDays: number; uniqueCustomers: number };
@@ -92,11 +93,42 @@ export function DashboardPage(): JSX.Element {
         </KpiRow>
       </QueryState>
 
-      {/* linha secundária: métricas de venda */}
-      {s && s.quantity > 0 && (
-        <KpiRow cols={3}>
+      {/* Onda 1 dos cards do Gdoor Relatórios antigo (26/08): hoje × ontem com a variação já
+          calculada, e o caixa em duas verdades — contábil (registrado) × físico (contado). */}
+      {t && (
+        <KpiRow cols={2}>
+          <KpiCard
+            label="Hoje × ontem"
+            value={formatCompactBRL(t.hojeOntem.hoje.total)}
+            tone={t.hojeOntem.variacaoPct == null ? 'default' : t.hojeOntem.variacaoPct >= 0 ? 'emerald' : 'red'}
+            compact
+            sub={
+              t.hojeOntem.variacaoPct == null
+                ? `${formatInt(t.hojeOntem.hoje.count)} vendas hoje · ontem sem venda`
+                : `${t.hojeOntem.variacaoPct >= 0 ? '▲' : '▼'} ${Math.abs(t.hojeOntem.variacaoPct).toFixed(1)}% vs ontem (${formatBRL(t.hojeOntem.ontem.total)})`
+            }
+          />
+          <KpiCard
+            label="Caixa contábil × físico"
+            value={formatCompactBRL(t.caixaFisico.contado)}
+            tone={t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
+            compact
+            sub={
+              t.caixaFisico.fechamentos === 0
+                ? 'sem fechamento de caixa no período'
+                : `esperado ${formatBRL(t.caixaFisico.esperado)} · quebra ${t.caixaFisico.quebra < 0 ? '−' : '+'}${formatBRL(Math.abs(t.caixaFisico.quebra))} em ${t.caixaFisico.comQuebra} de ${t.caixaFisico.fechamentos} caixas`
+            }
+          />
+        </KpiRow>
+      )}
+
+      {/* linha secundária: métricas de venda. Média diária = por dia TRABALHADO (feriado não
+          derruba a média, como no relatório antigo). */}
+      {s && s.quantity > 0 && t && (
+        <KpiRow cols={4}>
           <KpiCard label="Ticket médio" value={formatBRL(s.ticket)} compact />
-          <KpiCard label="Dias com venda" value={formatInt(s.workingDays)} compact />
+          <KpiCard label="Dias trabalhados" value={formatInt(t.diasTrabalhados)} compact />
+          <KpiCard label="Média diária" value={formatCompactBRL(t.mediaDiaria)} compact sub={formatBRL(t.mediaDiaria)} />
           <KpiCard label="Clientes únicos" value={formatInt(s.uniqueCustomers)} compact />
         </KpiRow>
       )}
@@ -108,8 +140,9 @@ export function DashboardPage(): JSX.Element {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PeakHoursChart />
-        <SellerRanking from={from} to={to} />
+        <WeekdayChart from={from} to={to} />
       </div>
+      <SellerRanking from={from} to={to} />
 
       {/* Formas de pagamento: lista + pizza */}
       <section className="bg-white rounded-xl shadow-sm border p-5">

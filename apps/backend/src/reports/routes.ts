@@ -163,7 +163,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const where = {
       tenantId: req.user!.tenantId,
-      cancelled: false,
+      ...SALE_OF_RECORD, // P4: NFC-e 65 e copia fiscal do PV — nao conta 2x
       saleDate: { gte: from, lte: to },
       ...(storeId ? { storeId } : {}),
     };
@@ -1124,7 +1124,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
     const prevTo = new Date(from.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86_400_000);
-    const scopedWhere = (f: Date, t: Date) => ({ tenantId: req.user!.tenantId, cancelled: false, saleDate: { gte: f, lte: t }, ...(storeId ? { storeId } : {}) });
+    const scopedWhere = (f: Date, t: Date) => ({ tenantId: req.user!.tenantId, ...SALE_OF_RECORD, saleDate: { gte: f, lte: t }, ...(storeId ? { storeId } : {}) });
 
     const [curAgg, prevAgg] = await Promise.all([
       prisma.sale.aggregate({ where: scopedWhere(from, to), _sum: { totalValue: true }, _count: true }),
@@ -1243,7 +1243,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       FROM sales s JOIN payments p ON p."saleId" = s.id
       WHERE s."tenantId" = ${req.user!.tenantId} ${storeId ? Prisma.sql`AND s."storeId" = ${storeId}` : Prisma.empty}
         AND s."modelo" = '65' AND s."cancelled" = false AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`);
-    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv] = await Promise.all([
+    // Cards da onda 1 (26/08, copiados do Gdoor Relatorios antigo): hoje x ontem sao dias de
+    // CALENDARIO (nao dependem do filtro), dias trabalhados = dias distintos com venda no periodo.
+    const hojeIni = new Date(); hojeIni.setUTCHours(0, 0, 0, 0);
+    const ontemIni = new Date(hojeIni.getTime() - 86_400_000);
+    const ontemFim = new Date(hojeIni.getTime() - 1);
+    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv, vHoje, vOntem, diasDistintos, conferencia] = await Promise.all([
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
       // recebido de verdade em caixa no periodo = fluxo realizado (entradas), reaproveita buildCashflow
       buildCashflow(req.user!.tenantId, storeId, from, to, 'day'),
@@ -1251,8 +1256,18 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.payable.aggregate({ where: { ...scope, cancelled: false, paidValue: { gt: 0 }, paidDate: { gte: from, lte: to } }, _sum: { paidValue: true }, _count: true }),
       getFreshnessMeta(req.user!.tenantId, storeId),
       nfceSemPvQ,
+      prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: hojeIni } }, _sum: { totalValue: true }, _count: true }),
+      prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: ontemIni, lte: ontemFim } }, _sum: { totalValue: true }, _count: true }),
+      prisma.sale.findMany({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, distinct: ['saleDate'], select: { saleDate: true } }),
+      buildCashConference(req.user!.tenantId, storeId, from, to),
     ]);
     const nfceDireta = { count: Number(nfceSemPv[0]?.n ?? 0), total: Number(nfceSemPv[0]?.total ?? 0) };
+    const hoje = { total: Number(vHoje._sum.totalValue ?? 0), count: vHoje._count };
+    const ontem = { total: Number(vOntem._sum.totalValue ?? 0), count: vOntem._count };
+    // variacao ja calculada (card entrega a conta pronta, como no relatorio antigo); null = sem base
+    const variacaoPct = ontem.total > 0 ? ((hoje.total - ontem.total) / ontem.total) * 100 : null;
+    const diasTrabalhados = diasDistintos.length;
+    const totalPeriodo = Number(vendas._sum.totalValue ?? 0) + nfceDireta.total;
 
     return {
       periodo: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
@@ -1262,6 +1277,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       recebidoCaixa: { total: recebidoAgg.totals.entradas },
       contasRecebidas: { total: Number(contasReceber._sum.receivedValue ?? 0), count: contasReceber._count },
       contasPagas: { total: Number(contasPagar._sum.paidValue ?? 0), count: contasPagar._count },
+      hojeOntem: { hoje, ontem, variacaoPct },
+      // faturamento do mes sozinho engana quando teve feriado — media por dia trabalhado corrige
+      diasTrabalhados,
+      mediaDiaria: diasTrabalhados > 0 ? totalPeriodo / diasTrabalhados : 0,
+      // saldo CONTABIL (recebidoCaixa, registrado no expediente) x FISICO (contado no fechamento)
+      caixaFisico: { ...conferencia.totals, fechamentos: conferencia.closings.length, comQuebra: conferencia.fechamentosComQuebra },
       quality: recebidoAgg.quality,
       meta,
     };
@@ -1399,95 +1420,102 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
-    const tenantId = req.user!.tenantId;
-    const scope = { tenantId, ...(storeId ? { storeId } : {}) };
-
-    const [closings, payRows, movRows, meta] = await Promise.all([
-      prisma.cashClosing.findMany({
-        where: { ...scope, closedAt: { not: null }, openedAt: { gte: from, lte: to } },
-        include: { species: true },
-        orderBy: [{ openedAt: 'desc' }, { pdv: 'asc' }],
-        take: 300,
-      }),
-      // pagamentos de venda por dia x caixa (sales.caixa) x forma
-      prisma.$queryRaw<{ day: Date; caixa: string | null; paymentType: string; total: unknown }[]>(Prisma.sql`
-        SELECT date_trunc('day', p."paymentDate") AS day, s."caixa", p."paymentType", SUM(p."value") AS total
-        FROM payments p JOIN sales s ON s.id = p."saleId"
-        WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
-          AND s."cancelled" = false AND (p."kind" IS NULL OR p."kind" IN ('venda', 'recebimento'))
-          AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
-        GROUP BY 1, 2, 3`),
-      // sangria/suprimento por dia (sem PDV no GDOOR)
-      prisma.$queryRaw<{ day: Date; kind: string; total: unknown }[]>(Prisma.sql`
-        SELECT date_trunc('day', p."paymentDate") AS day, p."kind", SUM(p."value") AS total
-        FROM payments p
-        WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
-          AND p."kind" IN ('sangria', 'suprimento') AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
-        GROUP BY 1, 2`),
-      getFreshnessMeta(tenantId, storeId),
-    ]);
-
-    const dayKey = (d: Date) => d.toISOString().slice(0, 10);
-    const pdvNum = (v: string | null | undefined) => { const n = parseInt(String(v ?? ''), 10); return Number.isNaN(n) ? null : n; };
-    // esperado[day|pdv] -> { forma -> valor }
-    const esperado = new Map<string, Map<string, number>>();
-    for (const r of payRows) {
-      const k = `${dayKey(r.day)}|${pdvNum(r.caixa)}`;
-      const forma = normalizePaymentType(r.paymentType) ?? 'outros';
-      const m = esperado.get(k) ?? new Map<string, number>();
-      m.set(forma, (m.get(forma) ?? 0) + Number(r.total));
-      esperado.set(k, m);
-    }
-    const movByDay = new Map<string, { sangria: number; suprimento: number }>();
-    for (const r of movRows) {
-      const k = dayKey(r.day);
-      const m = movByDay.get(k) ?? { sangria: 0, suprimento: 0 };
-      if (r.kind === 'sangria') m.sangria += Number(r.total); else m.suprimento += Number(r.total);
-      movByDay.set(k, m);
-    }
-    const closingsPerDay = new Map<string, number>();
-    for (const c of closings) { const k = dayKey(c.openedAt); closingsPerDay.set(k, (closingsPerDay.get(k) ?? 0) + 1); }
-
-    const avisos = new Set<string>();
-    const out = closings.map((c) => {
-      const dia = dayKey(c.openedAt);
-      const esp = esperado.get(`${dia}|${pdvNum(c.pdv)}`) ?? new Map<string, number>();
-      const mov = movByDay.get(dia);
-      const unico = (closingsPerDay.get(dia) ?? 0) === 1;
-      const sangrias = mov && unico ? mov.sangria : 0;
-      const suprimentos = mov && unico ? mov.suprimento : 0;
-      if (mov && !unico && (mov.sangria > 0 || mov.suprimento > 0)) avisos.add(`Em ${dia} há sangria/suprimento e mais de um caixa — o GDOOR não diz de qual caixa, ficaram fora do esperado.`);
-      const fundo = c.openingAmount != null ? Number(c.openingAmount) : null;
-      // dinheiro fisico esperado na gaveta = fundo + vendas em dinheiro + suprimento - sangria
-      const espDinheiro = (esp.get('dinheiro') ?? 0) + (fundo ?? 0) + suprimentos - sangrias;
-      const contadoPorForma = new Map<string, number>();
-      for (const sp of c.species) {
-        const forma = normalizePaymentType(sp.especie) ?? 'outros';
-        contadoPorForma.set(forma, (contadoPorForma.get(forma) ?? 0) + Number(sp.counted));
-      }
-      const formas = [...new Set([...esp.keys(), ...contadoPorForma.keys(), 'dinheiro'])];
-      const porForma = formas.map((forma) => {
-        const e = forma === 'dinheiro' ? espDinheiro : (esp.get(forma) ?? 0);
-        const ct = contadoPorForma.get(forma) ?? 0;
-        return { forma, esperado: e, contado: ct, quebra: ct - e };
-      }).sort((a, b) => Math.abs(b.quebra) - Math.abs(a.quebra));
-      const esperadoTot = porForma.reduce((s, f) => s + f.esperado, 0);
-      const contadoTot = porForma.reduce((s, f) => s + f.contado, 0);
-      return {
-        id: c.id, dia, pdv: c.pdv, operador: c.operatorName,
-        abertura: c.openedAt, fechamento: c.closedAt,
-        fundoTroco: fundo, sangrias, suprimentos,
-        esperado: esperadoTot, contado: contadoTot, quebra: contadoTot - esperadoTot,
-        porForma,
-      };
-    });
-    if (closings.some((c) => c.species.length === 0)) avisos.add('Alguns fechamentos vieram sem contagem por forma (operador fechou sem informar) — contado = 0 nesses.');
-
-    const totals = out.reduce((a, c) => ({ esperado: a.esperado + c.esperado, contado: a.contado + c.contado, quebra: a.quebra + c.quebra }), { esperado: 0, contado: 0, quebra: 0 });
-    return { closings: out, totals, fechamentosComQuebra: out.filter((c) => Math.abs(c.quebra) >= 0.005).length, avisos: [...avisos], meta };
+    return buildCashConference(req.user!.tenantId, storeId, from, to);
   }));
 
   registerFinanceRoutes(app);
+}
+
+
+// Conferencia de caixa (D20): esperado (GDOOR no expediente) x contado (operador no fechamento).
+// Extraido do handler em 26/08 pra o Dashboard mostrar o card "saldo contabil x fisico" (onda 1
+// dos cards do Gdoor Relatorios antigo) sem duplicar a regra.
+async function buildCashConference(tenantId: string, storeId: string | null, from: Date, to: Date) {
+  const scope = { tenantId, ...(storeId ? { storeId } : {}) };
+
+    const [closings, payRows, movRows, meta] = await Promise.all([
+    prisma.cashClosing.findMany({
+      where: { ...scope, closedAt: { not: null }, openedAt: { gte: from, lte: to } },
+      include: { species: true },
+      orderBy: [{ openedAt: 'desc' }, { pdv: 'asc' }],
+      take: 300,
+    }),
+    // pagamentos de venda por dia x caixa (sales.caixa) x forma
+    prisma.$queryRaw<{ day: Date; caixa: string | null; paymentType: string; total: unknown }[]>(Prisma.sql`
+      SELECT date_trunc('day', p."paymentDate") AS day, s."caixa", p."paymentType", SUM(p."value") AS total
+      FROM payments p JOIN sales s ON s.id = p."saleId"
+      WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
+        AND s."cancelled" = false AND (p."kind" IS NULL OR p."kind" IN ('venda', 'recebimento'))
+        AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
+      GROUP BY 1, 2, 3`),
+    // sangria/suprimento por dia (sem PDV no GDOOR)
+    prisma.$queryRaw<{ day: Date; kind: string; total: unknown }[]>(Prisma.sql`
+      SELECT date_trunc('day', p."paymentDate") AS day, p."kind", SUM(p."value") AS total
+      FROM payments p
+      WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
+        AND p."kind" IN ('sangria', 'suprimento') AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
+      GROUP BY 1, 2`),
+    getFreshnessMeta(tenantId, storeId),
+  ]);
+
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+  const pdvNum = (v: string | null | undefined) => { const n = parseInt(String(v ?? ''), 10); return Number.isNaN(n) ? null : n; };
+  // esperado[day|pdv] -> { forma -> valor }
+  const esperado = new Map<string, Map<string, number>>();
+  for (const r of payRows) {
+    const k = `${dayKey(r.day)}|${pdvNum(r.caixa)}`;
+    const forma = normalizePaymentType(r.paymentType) ?? 'outros';
+    const m = esperado.get(k) ?? new Map<string, number>();
+    m.set(forma, (m.get(forma) ?? 0) + Number(r.total));
+    esperado.set(k, m);
+  }
+  const movByDay = new Map<string, { sangria: number; suprimento: number }>();
+  for (const r of movRows) {
+    const k = dayKey(r.day);
+    const m = movByDay.get(k) ?? { sangria: 0, suprimento: 0 };
+    if (r.kind === 'sangria') m.sangria += Number(r.total); else m.suprimento += Number(r.total);
+    movByDay.set(k, m);
+  }
+  const closingsPerDay = new Map<string, number>();
+  for (const c of closings) { const k = dayKey(c.openedAt); closingsPerDay.set(k, (closingsPerDay.get(k) ?? 0) + 1); }
+
+  const avisos = new Set<string>();
+  const out = closings.map((c) => {
+    const dia = dayKey(c.openedAt);
+    const esp = esperado.get(`${dia}|${pdvNum(c.pdv)}`) ?? new Map<string, number>();
+    const mov = movByDay.get(dia);
+    const unico = (closingsPerDay.get(dia) ?? 0) === 1;
+    const sangrias = mov && unico ? mov.sangria : 0;
+    const suprimentos = mov && unico ? mov.suprimento : 0;
+    if (mov && !unico && (mov.sangria > 0 || mov.suprimento > 0)) avisos.add(`Em ${dia} há sangria/suprimento e mais de um caixa — o GDOOR não diz de qual caixa, ficaram fora do esperado.`);
+    const fundo = c.openingAmount != null ? Number(c.openingAmount) : null;
+    // dinheiro fisico esperado na gaveta = fundo + vendas em dinheiro + suprimento - sangria
+    const espDinheiro = (esp.get('dinheiro') ?? 0) + (fundo ?? 0) + suprimentos - sangrias;
+    const contadoPorForma = new Map<string, number>();
+    for (const sp of c.species) {
+      const forma = normalizePaymentType(sp.especie) ?? 'outros';
+      contadoPorForma.set(forma, (contadoPorForma.get(forma) ?? 0) + Number(sp.counted));
+    }
+    const formas = [...new Set([...esp.keys(), ...contadoPorForma.keys(), 'dinheiro'])];
+    const porForma = formas.map((forma) => {
+      const e = forma === 'dinheiro' ? espDinheiro : (esp.get(forma) ?? 0);
+      const ct = contadoPorForma.get(forma) ?? 0;
+      return { forma, esperado: e, contado: ct, quebra: ct - e };
+    }).sort((a, b) => Math.abs(b.quebra) - Math.abs(a.quebra));
+    const esperadoTot = porForma.reduce((s, f) => s + f.esperado, 0);
+    const contadoTot = porForma.reduce((s, f) => s + f.contado, 0);
+    return {
+      id: c.id, dia, pdv: c.pdv, operador: c.operatorName,
+      abertura: c.openedAt, fechamento: c.closedAt,
+      fundoTroco: fundo, sangrias, suprimentos,
+      esperado: esperadoTot, contado: contadoTot, quebra: contadoTot - esperadoTot,
+      porForma,
+    };
+  });
+  if (closings.some((c) => c.species.length === 0)) avisos.add('Alguns fechamentos vieram sem contagem por forma (operador fechou sem informar) — contado = 0 nesses.');
+
+  const totals = out.reduce((a, c) => ({ esperado: a.esperado + c.esperado, contado: a.contado + c.contado, quebra: a.quebra + c.quebra }), { esperado: 0, contado: 0, quebra: 0 });
+  return { closings: out, totals, fechamentosComQuebra: out.filter((c) => Math.abs(c.quebra) >= 0.005).length, avisos: [...avisos], meta };
 }
 
 // ─── Contas a pagar / contas a receber ──────────────────────────────────────
