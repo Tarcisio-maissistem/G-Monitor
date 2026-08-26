@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { formatBRL, formatCompactBRL } from '../lib/masks';
 import { Spinner } from './Spinner';
 
 interface CalendarDay {
@@ -234,11 +235,4 @@ function SummaryChip({ label, value, color }: { label: string; value: number; co
   );
 }
 
-function formatBRL(n: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
-}
-
-// Versao curta pra caber na celula do calendario em tela de celular (ex: "R$1,2 mil").
-function formatCompactBRL(n: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 }).format(n);
-}
+// formatBRL / formatCompactBRL agora vem de lib/masks (fonte unica, D18).

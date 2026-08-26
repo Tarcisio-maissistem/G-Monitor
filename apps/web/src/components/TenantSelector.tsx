@@ -15,7 +15,10 @@ interface Option {
   subtitle?: string;
 }
 
-export function TenantSelector(): JSX.Element | null {
+// compact = versao pra top bar escura do celular (AppShell): sem rotulo "Cliente:", fundo
+// escuro, nome truncado curto e dropdown alinhado a direita (o botao fica no canto direito
+// da barra — alinhado a esquerda ele sairia da tela).
+export function TenantSelector({ compact = false }: { compact?: boolean } = {}): JSX.Element | null {
   const user = useAuthStore((s) => s.user);
   const activeTenantId = useAuthStore((s) => s.activeTenantId);
   const activeTenantName = useAuthStore((s) => s.activeTenantName);
@@ -76,27 +79,32 @@ export function TenantSelector(): JSX.Element | null {
   };
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className={`relative ${compact ? 'shrink-0' : ''}`}>
       <button
         onClick={() => !switching && setOpen((v) => !v)}
         disabled={switching}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm text-slate-700 shadow-sm disabled:opacity-70"
+        className={
+          compact
+            ? 'flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-100 disabled:opacity-70 max-w-[9rem]'
+            : 'flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm text-slate-700 shadow-sm disabled:opacity-70'
+        }
+        title={activeTenantName ?? undefined}
       >
-        <span className="text-xs text-slate-400">Cliente:</span>
+        {!compact && <span className="text-xs text-slate-400">Cliente:</span>}
         {switching ? (
           <span className="font-medium flex items-center gap-1.5 text-slate-500">
-            <Spinner className="h-3.5 w-3.5" /> Trocando...
+            <Spinner className="h-3.5 w-3.5" /> {compact ? '' : 'Trocando...'}
           </span>
         ) : (
-          <span className="font-medium truncate max-w-[160px]">{activeTenantName ?? '—'}</span>
+          <span className={`font-medium truncate ${compact ? 'max-w-[7rem]' : 'max-w-[160px]'}`}>{activeTenantName ?? '—'}</span>
         )}
-        <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-3 h-3 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-1 w-72 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-xl shadow-lg z-50">
+        <div className={`absolute ${compact ? 'right-0' : 'left-0'} mt-1 w-72 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-xl shadow-lg z-50 text-slate-800`}>
           <div className="p-2 border-b">
             <input
               autoFocus
