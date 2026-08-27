@@ -1682,111 +1682,73 @@ function registerFinanceRoutes(app: FastifyInstance): void {
     to: z.string().date().optional(),
     storeId: z.string().optional(),
     status: z.enum(['paid', 'pending', 'overdue']).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(250).default(50),
   });
+
+  // Lista paginada de contas a pagar/receber. O status (paid/pending/overdue) NAO fica no banco
+  // — e derivado de value/settled/dueDate. Antes o endpoint puxava ate 500 linhas + TODAS de
+  // novo pro resumo. Agora o status vira CASE em SQL: da pra FILTRAR por status e paginar de
+  // verdade (skip/take), e o resumo e um SUM agregado (nao mais findMany de tudo). Pedido do
+  // dono 26/08 (economizar payload/requisicoes). settled = paidValue|receivedValue.
+  async function financeList(
+    table: 'payables' | 'receivables', settled: 'paidValue' | 'receivedValue', settledDate: 'paidDate' | 'receivedDate',
+    p: { tenantId: string; storeId: string | null; from: Date; to: Date; status: 'paid' | 'pending' | 'overdue' | undefined; page: number; pageSize: number },
+  ) {
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    const T = Prisma.raw(table);
+    const V = Prisma.raw('"value"'), S = Prisma.raw(`"${settled}"`), SD = Prisma.raw(`"${settledDate}"`);
+    const baseWhere = Prisma.sql`t."tenantId" = ${p.tenantId} ${p.storeId ? Prisma.sql`AND t."storeId" = ${p.storeId}` : Prisma.empty} AND t."cancelled" = false AND t."dueDate" >= ${p.from} AND t."dueDate" <= ${p.to}`;
+    // condicao SQL de cada status (mesma regra do classifyFinanceStatus)
+    const statusCond = (st: 'paid' | 'pending' | 'overdue') =>
+      st === 'paid' ? Prisma.sql`t.${S} >= t.${V}`
+      : st === 'overdue' ? Prisma.sql`t.${S} < t.${V} AND t.${SD} IS NULL AND t."dueDate" < ${today}`
+      : Prisma.sql`t.${S} < t.${V} AND NOT (t.${SD} IS NULL AND t."dueDate" < ${today})`;
+    const listWhere = p.status ? Prisma.sql`${baseWhere} AND ${statusCond(p.status)}` : baseWhere;
+    const statusCase = Prisma.sql`CASE WHEN t.${S} >= t.${V} THEN 'paid' WHEN t.${SD} IS NULL AND t."dueDate" < ${today} THEN 'overdue' ELSE 'pending' END`;
+
+    const [listRaw, countRaw, sumRaw, meta] = await Promise.all([
+      prisma.$queryRaw<{ sourceId: string; dueDate: Date; value: unknown; settled: unknown; settledDate: Date | null; counterparty: string | null; description: string | null; status: string }[]>(
+        Prisma.sql`SELECT t."sourceId", t."dueDate", t.${V} AS value, t.${S} AS settled, t.${SD} AS "settledDate", t."counterparty", t."description", ${statusCase} AS status
+          FROM ${T} t WHERE ${listWhere} ORDER BY t."dueDate" DESC LIMIT ${p.pageSize} OFFSET ${(p.page - 1) * p.pageSize}`),
+      prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS n FROM ${T} t WHERE ${listWhere}`),
+      // resumo SEMPRE sobre o periodo inteiro (ignora o filtro de status — os cards mostram tudo)
+      prisma.$queryRaw<{ total: unknown; pending: unknown; overdue: unknown }[]>(Prisma.sql`
+        SELECT COALESCE(SUM(t.${V}), 0) AS total,
+               COALESCE(SUM(CASE WHEN t.${S} < t.${V} THEN t.${V} - t.${S} ELSE 0 END), 0) AS pending,
+               COALESCE(SUM(CASE WHEN t.${S} < t.${V} AND t.${SD} IS NULL AND t."dueDate" < ${today} THEN t.${V} - t.${S} ELSE 0 END), 0) AS overdue
+        FROM ${T} t WHERE ${baseWhere}`),
+      getFreshnessMeta(p.tenantId, p.storeId),
+    ]);
+
+    const data = listRaw.map((r) => {
+      const value = Number(r.value), settledVal = Number(r.settled);
+      return { sourceId: r.sourceId, dueDate: r.dueDate, value, [settled]: settledVal, [settledDate]: r.settledDate, counterparty: r.counterparty, description: r.description, balance: value - settledVal, status: r.status };
+    });
+    const totalCount = Number(countRaw[0]?.n ?? 0);
+    const s = sumRaw[0];
+    return {
+      data,
+      summary: { total: Number(s?.total ?? 0), pending: Number(s?.pending ?? 0), overdue: Number(s?.overdue ?? 0) },
+      count: data.length,
+      totalCount,
+      pagination: { page: p.page, pageSize: p.pageSize, total: totalCount, totalPages: Math.max(1, Math.ceil(totalCount / p.pageSize)) },
+      meta,
+    };
+  }
 
   app.get('/api/reports/payables', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('payables', async (req) => {
     const query = listFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
-    const where = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } };
-
-    // Resumo (summary) sempre sobre o total real (nao so as 500 exibidas), senao pending/
-    // overdue somam errado quando a janela de datas tem mais de 500 lancamentos.
-    const [rows, allForSummary, totalCount, meta] = await Promise.all([
-      prisma.payable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
-      prisma.payable.findMany({ where, select: { value: true, paidValue: true, paidDate: true, dueDate: true } }),
-      prisma.payable.count({ where }),
-      getFreshnessMeta(req.user!.tenantId, storeId),
-    ]);
-
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const data = rows
-      .map((r) => {
-        const value = Number(r.value);
-        const paidValue = Number(r.paidValue);
-        return {
-          sourceId: r.sourceId,
-          dueDate: r.dueDate,
-          value,
-          paidValue,
-          paidDate: r.paidDate,
-          counterparty: r.counterparty,
-          description: r.description,
-          balance: value - paidValue,
-          status: classifyFinanceStatus(value, paidValue, r.paidDate, r.dueDate, today),
-        };
-      })
-      .filter((r) => !query.status || r.status === query.status);
-
-    const summary = allForSummary.reduce(
-      (acc, r) => {
-        const value = Number(r.value);
-        const paidValue = Number(r.paidValue);
-        const balance = value - paidValue;
-        const status = classifyFinanceStatus(value, paidValue, r.paidDate, r.dueDate, today);
-        return {
-          total: acc.total + value,
-          pending: acc.pending + (status !== 'paid' ? balance : 0),
-          overdue: acc.overdue + (status === 'overdue' ? balance : 0),
-        };
-      },
-      { total: 0, pending: 0, overdue: 0 },
-    );
-
-    return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
+    return financeList('payables', 'paidValue', 'paidDate', { tenantId: req.user!.tenantId, storeId, from, to, status: query.status, page: query.page, pageSize: query.pageSize });
   }));
 
   app.get('/api/reports/receivables', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('receivables', async (req) => {
     const query = listFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
-    const where = { tenantId: req.user!.tenantId, ...(storeId ? { storeId } : {}), cancelled: false, dueDate: { gte: from, lte: to } };
-
-    // Mesma logica do payables: summary sobre o total real, nao so as 500 exibidas.
-    const [rows, allForSummary, totalCount, meta] = await Promise.all([
-      prisma.receivable.findMany({ where, orderBy: { dueDate: 'desc' }, take: 500 }),
-      prisma.receivable.findMany({ where, select: { value: true, receivedValue: true, receivedDate: true, dueDate: true } }),
-      prisma.receivable.count({ where }),
-      getFreshnessMeta(req.user!.tenantId, storeId),
-    ]);
-
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const data = rows
-      .map((r) => {
-        const value = Number(r.value);
-        const receivedValue = Number(r.receivedValue);
-        return {
-          sourceId: r.sourceId,
-          dueDate: r.dueDate,
-          value,
-          receivedValue,
-          receivedDate: r.receivedDate,
-          counterparty: r.counterparty,
-          description: r.description,
-          balance: value - receivedValue,
-          status: classifyFinanceStatus(value, receivedValue, r.receivedDate, r.dueDate, today),
-        };
-      })
-      .filter((r) => !query.status || r.status === query.status);
-
-    const summary = allForSummary.reduce(
-      (acc, r) => {
-        const value = Number(r.value);
-        const receivedValue = Number(r.receivedValue);
-        const balance = value - receivedValue;
-        const status = classifyFinanceStatus(value, receivedValue, r.receivedDate, r.dueDate, today);
-        return {
-          total: acc.total + value,
-          pending: acc.pending + (status !== 'paid' ? balance : 0),
-          overdue: acc.overdue + (status === 'overdue' ? balance : 0),
-        };
-      },
-      { total: 0, pending: 0, overdue: 0 },
-    );
-
-    return { data, summary, count: data.length, totalCount, truncated: rows.length === 500 && totalCount > 500, meta };
+    return financeList('receivables', 'receivedValue', 'receivedDate', { tenantId: req.user!.tenantId, storeId, from, to, status: query.status, page: query.page, pageSize: query.pageSize });
   }));
 }
 

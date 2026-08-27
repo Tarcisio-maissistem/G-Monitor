@@ -18,3 +18,4 @@ export {
 export { CardList, CardRow, CardMeta, type CardListProps, type CardListColumn } from './CardList';
 export { QueryState, LoadingBox, ErrorBox, EmptyBox, type QueryStateProps, type QueryLike } from './QueryState';
 export { CopyWhatsAppButton, type CopyWhatsAppButtonProps } from './CopyWhatsAppButton';
+export { Pagination } from './Pagination';

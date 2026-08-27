@@ -5,6 +5,7 @@ import { FinanceCalendar } from '../components/FinanceCalendar';
 import { copyToClipboard } from '../lib/clipboard';
 import { useToast } from '../components/Toast';
 import { Spinner } from '../components/Spinner';
+import { Pagination } from '../components/ui';
 
 // Espelho de ContasPagarPage.tsx pro lado de receber. Contrato adaptado ao que
 // /api/reports/receivables realmente devolve (ver apps/backend/src/reports/routes.ts).
@@ -24,6 +25,8 @@ interface ReceivablesResponse {
   data: Receivable[];
   summary: { total: number; pending: number; overdue: number };
   count: number;
+  totalCount: number;
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
   meta: { lastSyncedAt: string | null };
 }
 
@@ -37,13 +40,18 @@ export function ContasReceberPage(): JSX.Element {
   const defaultFrom = useMemo(() => new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)).toISOString().slice(0, 10), [today]);
   const defaultTo = useMemo(() => today.toISOString().slice(0, 10), [today]);
 
-  const [from, setFrom] = useState(defaultFrom);
-  const [to, setTo] = useState(defaultTo);
-  const [status, setStatus] = useState<StatusFilter>('todos');
+  const [from, setFromRaw] = useState(defaultFrom);
+  const [to, setToRaw] = useState(defaultTo);
+  const [status, setStatusRaw] = useState<StatusFilter>('todos');
+  const [page, setPage] = useState(1);
+  // qualquer mudança de filtro volta pra página 1
+  const setFrom = (v: string): void => { setFromRaw(v); setPage(1); };
+  const setTo = (v: string): void => { setToRaw(v); setPage(1); };
+  const setStatus = (v: StatusFilter): void => { setStatusRaw(v); setPage(1); };
 
-  const qs = new URLSearchParams({ from, to, ...(status !== 'todos' ? { status } : {}) });
+  const qs = new URLSearchParams({ from, to, page: String(page), pageSize: '50', ...(status !== 'todos' ? { status } : {}) });
   const r = useQuery({
-    queryKey: ['receivables', from, to, status],
+    queryKey: ['receivables', from, to, status, page],
     queryFn: () => api<ReceivablesResponse>(`/api/reports/receivables?${qs}`),
   });
 
@@ -163,6 +171,9 @@ export function ContasReceberPage(): JSX.Element {
                 </tbody>
               </table>
             </div>
+            {r.data && r.data.pagination.totalPages > 1 && (
+              <Pagination page={r.data.pagination.page} totalPages={r.data.pagination.totalPages} total={r.data.pagination.total} pageSize={r.data.pagination.pageSize} onChange={setPage} />
+            )}
           </>
         )}
       </div>
