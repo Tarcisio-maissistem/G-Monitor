@@ -3,11 +3,51 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { formatBRL, formatCompactBRL, formatInt, formatBrDate } from '../../lib/masks';
 import type { DateRange } from '../../lib/period';
-import { rangeQuery } from '../../lib/period';
 import type { ExtratoResponse, IntegracoesResponse } from '../../lib/reports';
 import { KpiRow, KpiCard, Badge } from '../ui';
 import { useToast } from '../Toast';
 import { Spinner } from '../Spinner';
+
+// Quebra o período em blocos de 7 dias. O portal serializa a sessão (PHP), então um mês
+// inteiro passa de 60s e o gateway corta em 504 — visto em produção 27/08. Uma semana por
+// requisição fica em ~25s, e o usuário ainda vê o progresso.
+function blocosDe7Dias(from: string, to: string): Array<{ from: string; to: string }> {
+  const out: Array<{ from: string; to: string }> = [];
+  const fim = new Date(`${to}T00:00:00Z`);
+  let ini = new Date(`${from}T00:00:00Z`);
+  while (ini <= fim) {
+    const f = new Date(ini); f.setUTCDate(f.getUTCDate() + 6);
+    const ate = f > fim ? fim : f;
+    out.push({ from: ini.toISOString().slice(0, 10), to: ate.toISOString().slice(0, 10) });
+    ini = new Date(ate); ini.setUTCDate(ini.getUTCDate() + 1);
+  }
+  return out;
+}
+
+// Junta os blocos num resultado só: somas viram soma, listas viram concatenação.
+function juntar(partes: ExtratoResponse[]): ExtratoResponse {
+  const base = partes[0]!;
+  const soma = (f: (t: ExtratoResponse['totais']) => number): number => partes.reduce((a, p) => a + f(p.totais), 0);
+  return {
+    ...base,
+    periodo: { from: base.periodo.from, to: partes[partes.length - 1]!.periodo.to },
+    extrato: {
+      linhas: partes.reduce((a, p) => a + p.extrato.linhas, 0),
+      autorizadas: partes.reduce((a, p) => a + p.extrato.autorizadas, 0),
+      paginas: partes.reduce((a, p) => a + p.extrato.paginas, 0),
+    },
+    porDia: partes.flatMap((p) => p.porDia),
+    diasIgnorados: partes.flatMap((p) => p.diasIgnorados),
+    problemas: partes.flatMap((p) => p.problemas),
+    totais: {
+      extratoQtd: soma((t) => t.extratoQtd), extratoValor: soma((t) => t.extratoValor),
+      sistemaQtd: soma((t) => t.sistemaQtd), sistemaValor: soma((t) => t.sistemaValor),
+      conciliados: soma((t) => t.conciliados), soNoExtrato: soma((t) => t.soNoExtrato),
+      soNoSistema: soma((t) => t.soNoSistema),
+      valorSoNoExtrato: soma((t) => t.valorSoNoExtrato), valorSoNoSistema: soma((t) => t.valorSoNoSistema),
+    },
+  };
+}
 
 // Conciliação contra o extrato do portal da maquininha (Fase 3). A busca é SOB DEMANDA
 // (botão), não automática: é raspagem autenticada no portal do fornecedor e uma coleta
@@ -16,18 +56,26 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
   const qc = useQueryClient();
   const toast = useToast();
   const [buscando, setBuscando] = useState(false);
+  const [progresso, setProgresso] = useState('');
   const [res, setRes] = useState<ExtratoResponse | null>(null);
 
   const integ = useQuery({ queryKey: ['integracoes'], queryFn: () => api<IntegracoesResponse>('/api/tenant/integracoes') });
   const cfg = integ.data?.getcard;
 
   const buscar = async (): Promise<void> => {
-    setBuscando(true);
+    setBuscando(true); setRes(null);
+    const blocos = blocosDe7Dias(range.from, range.to);
+    const partes: ExtratoResponse[] = [];
     try {
-      setRes(await api<ExtratoResponse>(`/api/reports/conciliacao/extrato?${rangeQuery(range)}`));
+      for (let i = 0; i < blocos.length; i++) {
+        setProgresso(blocos.length > 1 ? `semana ${i + 1} de ${blocos.length}` : '');
+        const b = blocos[i]!;
+        partes.push(await api<ExtratoResponse>(`/api/reports/conciliacao/extrato?from=${b.from}&to=${b.to}`));
+        setRes(juntar(partes)); // mostra o parcial enquanto as outras semanas chegam
+      }
     } catch (e) {
-      toast.push({ type: 'error', message: (e as Error).message });
-    } finally { setBuscando(false); }
+      toast.push({ type: 'error', message: partes.length ? `Parei na ${progresso}: ${(e as Error).message}` : (e as Error).message });
+    } finally { setBuscando(false); setProgresso(''); }
   };
 
   return (
@@ -45,7 +93,8 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
           title={cfg?.temSenha ? '' : 'Cadastre a credencial do portal primeiro'}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 inline-flex items-center gap-2 shrink-0"
         >
-          {buscando && <Spinner className="h-3.5 w-3.5" />}{buscando ? 'Buscando no portal...' : 'Buscar extrato'}
+          {buscando && <Spinner className="h-3.5 w-3.5" />}
+          {buscando ? (progresso ? `Buscando... ${progresso}` : 'Buscando no portal...') : 'Buscar extrato'}
         </button>
       </div>
 
