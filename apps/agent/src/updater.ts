@@ -54,13 +54,34 @@ async function downloadAndVerify(url: string, expectedSha256: string, destPath: 
 }
 
 function spawnDetachedUpdater(stagingPath: string, currentExePath: string): void {
-  // Cria um .bat que aguarda o processo atual sair, troca o exe e deixa o
-  // nssm reiniciar o servico (config AppRestartDelay=5s ja foi gravada).
+  // Cria um .bat que aguarda o processo atual sair, troca o exe e deixa o nssm reiniciar o
+  // servico (AppRestartDelay=5s ja gravado pelo instalador).
+  //
+  // NAO usar `timeout /t`: ele exige console de entrada e o processo e criado com stdio
+  // 'ignore' — falha na hora com "Input redirection is not supported", o move roda com o .exe
+  // ainda em uso e a troca NUNCA acontece. Foi o que prendeu o agente do dono num loop de
+  // "detecta 0.9.0 -> reinicia -> ainda 0.8.0" em 27/08. `ping -n` espera sem precisar de
+  // console. E o move ganha retentativa, porque o arquivo pode seguir travado por alguns
+  // segundos depois da saida do processo.
   const batchPath = path.join(path.dirname(currentExePath), 'updater.bat');
+  const logPath = path.join(path.dirname(currentExePath), 'updater.log');
   const batchContent = `@echo off
-timeout /t 4 /nobreak >nul
-move /Y "${stagingPath}" "${currentExePath}"
+ping -n 6 127.0.0.1 >nul
+set /a tentativa=0
+:retry
+set /a tentativa+=1
+move /Y "${stagingPath}" "${currentExePath}" >>"${logPath}" 2>&1
+if not exist "${stagingPath}" goto ok
+if %tentativa% GEQ 10 goto falhou
+ping -n 4 127.0.0.1 >nul
+goto retry
+:ok
+echo [%date% %time%] troca concluida na tentativa %tentativa% >>"${logPath}"
 del "%~f0"
+exit /b 0
+:falhou
+echo [%date% %time%] FALHOU apos %tentativa% tentativas - exe em uso >>"${logPath}"
+exit /b 1
 `;
   fs.writeFileSync(batchPath, batchContent, 'utf-8');
 
