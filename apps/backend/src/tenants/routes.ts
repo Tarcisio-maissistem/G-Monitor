@@ -26,9 +26,23 @@ const updateStoreSchema = z.object({
 // Configuracoes de negocio (meta mensal, regras de comissao) — guardadas em Tenant.meta
 // (JSON) pra nao precisar de tabela nova so pra 2 campos. Usado por MetaMensalPage e
 // ComissaoPage (resgatadas 23/08, nunca tinham backend correspondente).
+// Taxas de adquirente por canal (conciliacao bancaria, Fase 2 — 26/08). Ficam em tenant.meta
+// (mesmo padrao de monthlyGoal/commissionRules) porque sao poucas linhas por loja e nao
+// justificam tabela propria. `installments: null` = vale para qualquer parcelamento;
+// `acquirer: null` = vale para qualquer adquirente (Cielo/Rede). Ver openspec D21.
+const feeRuleSchema = z.object({
+  channel: z.enum(['pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico']),
+  acquirer: z.string().max(40).nullable().optional(),
+  installments: z.number().int().min(1).max(24).nullable().optional(),
+  percent: z.number().min(0).max(100),
+  fixedValue: z.number().min(0).default(0),
+  daysToReceive: z.number().int().min(0).max(180).default(1),
+});
+
 const settingsSchema = z.object({
   monthlyGoal: z.number().nonnegative().optional(),
   commissionRules: z.array(z.object({ operator: z.string(), percent: z.number().min(0).max(100) })).optional(),
+  feeRules: z.array(feeRuleSchema).max(60).optional(),
 });
 
 export async function tenantRoutes(app: FastifyInstance): Promise<void> {
@@ -53,7 +67,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tenant/settings', { preHandler: [requireAuth] }, async (req) => {
     const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
     const meta = (tenant?.meta ?? {}) as Record<string, unknown>;
-    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules } };
+    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules, feeRules: meta.feeRules ?? [] } };
   });
 
   app.patch('/api/tenant/settings', { preHandler: [requireAuth, requireCapability('tenant.update'), audit({ action: 'tenant.settings.update', captureBody: true })] }, async (req) => {
@@ -65,7 +79,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
       data: { meta: meta as Prisma.InputJsonValue },
     });
     const updatedMeta = updated.meta as Record<string, unknown>;
-    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules } };
+    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [] } };
   });
 
   app.get('/api/tenant/stores', { preHandler: [requireAuth] }, async (req) => {

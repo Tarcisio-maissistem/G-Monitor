@@ -73,3 +73,26 @@ export type PaymentBreakdown = Record<PaymentKey, number>;
 export function emptyBreakdown(): PaymentBreakdown {
   return { dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 };
 }
+
+// ─── Canal de taxa (conciliacao bancaria, D21 — 26/08) ──────────────────────────────
+// Granularidade MAIOR que PaymentKey: pra taxa, `cartao` nao basta (debito e credito tem
+// taxas diferentes) e `pix` nao basta (PIX pelo TEF/Shipay cobra taxa, PIX estatico costuma
+// ser outra). Os literais reais do cliente (Piloto, agosto/2026):
+//   'CARTãO DéBITO' · 'CARTãO CRéDITO' · 'PAGAMENTO INSTANTâNEO (PIX)' (TEF/Shipay)
+//   'PAGAMENTO INSTANTâNEO ESTATICO (PIX)' (QR fixo da loja)
+// Retorna null pro que NAO tem taxa de adquirente (dinheiro, crediario da propria loja).
+export type FeeChannel = 'pos_debito' | 'pos_credito' | 'pix_tef' | 'pix_estatico';
+
+export const FEE_CHANNELS: readonly FeeChannel[] = ['pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico'];
+
+export function feeChannel(raw: string | null | undefined): FeeChannel | null {
+  const t = normalizeText(raw);
+  if (!t) return null;
+  // PIX primeiro: 'ESTATICO' so aparece no literal do QR fixo.
+  if (t.includes('PIX')) return t.includes('ESTATICO') ? 'pix_estatico' : 'pix_tef';
+  // crediario da loja NAO e adquirente — checado antes de cartao (mesma ordem do normalize)
+  if (t.includes('PRAZO') || t.includes('CREDIARIO') || t.includes('CREDITO LOJA') || t.includes('CARTAO DA LOJA')) return null;
+  if (t.includes('DEBITO')) return 'pos_debito';
+  if (t.includes('CREDITO')) return 'pos_credito';
+  return null; // dinheiro, outros
+}

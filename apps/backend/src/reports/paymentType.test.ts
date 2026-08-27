@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizePaymentType, normalizeText } from './paymentType.js';
+import { normalizePaymentType, normalizeText, feeChannel } from './paymentType.js';
 
 // Literais REAIS de payments.paymentType na prod (Fase 0, 25/08) — cada um com a chave esperada.
 // Se o GDOOR de um cliente novo mandar algo diferente, o literal entra aqui junto com a regra.
@@ -69,5 +69,22 @@ describe('normalizeText', () => {
   it('serve pra comparar natureza da venda sem depender de acento', () => {
     expect(normalizeText('Devolução de compra para comercialização')).toBe('DEVOLUCAO DE COMPRA PARA COMERCIALIZACAO');
     expect(normalizeText('Venda com substituição tributária')).toBe('VENDA COM SUBSTITUICAO TRIBUTARIA');
+  });
+});
+
+describe('feeChannel', () => {
+  it('separa debito de credito no POS', () => {
+    expect(feeChannel('CARTãO DéBITO')).toBe('pos_debito');
+    expect(feeChannel('CARTãO CRéDITO')).toBe('pos_credito');
+  });
+  it('separa PIX do TEF (Shipay) do PIX estatico', () => {
+    expect(feeChannel('PAGAMENTO INSTANTâNEO (PIX)')).toBe('pix_tef');
+    expect(feeChannel('PAGAMENTO INSTANTâNEO ESTATICO (PIX)')).toBe('pix_estatico');
+  });
+  it('nao cobra taxa de dinheiro nem de crediario da loja', () => {
+    expect(feeChannel('DINHEIRO')).toBeNull();
+    expect(feeChannel('A PRAZO / CRéDITO LOJA')).toBeNull();
+    expect(feeChannel('CARTãO DA LOJA, CREDIáRIO DIGITAL, OUTROS CREDIáRIOS')).toBeNull();
+    expect(feeChannel(null)).toBeNull();
   });
 });
