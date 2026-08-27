@@ -162,3 +162,27 @@ mês**, não de dezenas de milhares. É exatamente o tamanho de achado que só a
 
 `MOVIMENTACAO_CARTAO.BANDEIRA` tem `SHIPAY` (45 transações em agosto), que bate com as 48
 transações de `pix_tef` contadas pelo `feeChannel()`. Confirma o mapeamento do canal.
+
+## D29 — Investigação dos 5 dias divergentes (27/08): sobrou UMA transação
+
+Cruzamento transação a transação nos 5 dias que não fechavam. Resultado:
+
+| Dia | Situação |
+|---|---|
+| 05, 21, 23/08 | **Casaram 100%** depois de usar a coluna de data certa (ver abaixo) |
+| 03/08 — R$ 49,43 | **Não é divergência.** O GDOOR registrou como `CREDITO ENTREGA` às 09:49:42 (venda #601588), 15s antes do carimbo do portal. Só "sumiu" porque a comparação estava restrita às formas TEF. |
+| 22/08 — R$ 567,80 | **DIVERGÊNCIA REAL.** Cartão aprovado na maquininha (portal: NSU 002319, aut 684385, CIELO, 11:08:43). O GDOOR capturou em `MOVIMENTACAO_CARTAO` (id 17768) com **`PROCESSADA = 0`** e **sem nenhum vínculo** em `VENDA_PAGAMENTO_CARTAO` — nunca virou pagamento nem venda. |
+
+**No mês inteiro há exatamente 1 transação com `PROCESSADA = 0`** (1.255 estão em 1). Ou seja:
+o buraco real de agosto é R$ 567,80 — uma cobrança que entrou na adquirente e não existe como
+venda no sistema.
+
+### Três correções que a investigação impôs ao coletor
+
+1. **Casar pela coluna `D/H Estabelecimento` (col 9), não `Data da Msg` (col 8).** As duas
+   divergem: usando a col 8, três dias apareceram como divergentes sem serem.
+2. **Comparar contra TODAS as formas de cartão**, não só `TEF CREDITO/DEBITO`. O caso de
+   03/08 mostrou que uma venda passada na mesma maquininha pode ser registrada como
+   `CREDITO ENTREGA` / `DEBITO ENTREGA`.
+3. **`MOVIMENTACAO_CARTAO.PROCESSADA = 0` é sinal direto** de "cobrou e não virou venda" —
+   é barato, preciso e não depende nem do portal. Vira alerta próprio no painel.
