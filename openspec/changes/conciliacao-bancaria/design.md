@@ -124,24 +124,39 @@ Detalhes que o parser precisa tratar:
 - `NSU Host` só vem preenchido na REDE; na CIELO fica vazio.
 - Status observado: `Autorizadas000` (o painel também tem Negado/Cancelado).
 
-## D27 — O portal cobre 2 PDVs; o GDOOR do PC cobre menos
+## D27 — CORRIGIDO: o portal casa com TEF CREDITO + TEF DEBITO (não com MOVIMENTACAO_CARTAO)
 
-Comparação do MESMO dia (06/08/2026), medida nos dois lados:
+**Erro cometido e corrigido em 27/08:** a primeira comparação usou `MOVIMENTACAO_CARTAO`
+(1.256 linhas / R$131.553 em agosto) e concluiu que "o portal tem o dobro do GDOOR". Errado —
+tabela errada. O portal GetCard corresponde às formas **`TEF CREDITO` + `TEF DEBITO`** em
+`MOV_OPERADORES`. É a mesma armadilha já registrada no CLAUDE.md: conferir a fonte certa
+ANTES de afirmar.
 
-| Fonte | Transações | Valor |
+Comparação correta, dia a dia, 01–26/08/2026:
+
+| | Transações | Valor |
 |---|---|---|
-| Portal GetCard (PDV 001 + 002) | 97 (56 + 41) | R$ 8.528,12 |
-| GDOOR `MOVIMENTACAO_CARTAO` (10.8.0.4) | 43 (CIELO 20, REDE 21, SHIPAY 2) | R$ 4.781,43 |
+| Portal GetCard (autorizadas, PDV 001+002) | 2.636 | R$ 269.201,35 |
+| GDOOR `TEF CREDITO + TEF DEBITO` | 2.454 | R$ 254.786,63 |
 
-O portal tem **mais que o dobro**. Também não houve casamento por valor+data nas 4 amostras
-testadas. Isso NÃO invalida a conciliação — é exatamente o que ela existe para revelar. As
-hipóteses (a confirmar com o dono, não afirmar): o PDV 002 não está integrado ao GDOOR desta
-máquina, ou há venda passada direto na maquininha sem entrar no sistema. Antes de acusar
-qualquer lado, a Fase 3 deve conciliar **por PDV**, não no total.
+**De 01/08 a 23/08 os dois lados batem — em 18 dos 23 dias a diferença é R$ 0,00**, incluindo
+a contagem de transações. Isso VALIDA o modelo de conciliação.
 
-Consequência de desenho: `AcquirerStatement` guarda o **PDV** e o casamento é
-`(pdv, adquirente, NSU, data)`. Sem o PDV, PDV 001 e 002 embaralham NSU (ambos começam em
-`001001`) e a conciliação daria falso positivo.
+A diferença total de R$ 14.414,72 se decompõe assim:
+- **R$ 13.720,42 (95%) = cópia local desatualizada.** O banco em 10.8.0.4 é de "ontem"
+  (informado pelo dono): 25 e 26/08 têm ZERO no GDOOR e 24/08 está parcial (57 de 103).
+- **R$ 694,30 (5%) = divergência real**, concentrada em 5 dias: 03/08 (+7,73), 05/08 (+212,17),
+  21/08 (+140,76), 22/08 (+407,23) e 23/08 (−73,59 — aqui o GDOOR tem uma transação a MAIS).
+
+Ou seja: a venda que passa na maquininha fora do sistema existe, mas é da ordem de **R$ 700 no
+mês**, não de dezenas de milhares. É exatamente o tamanho de achado que só a conciliação revela.
+
+**Consequências de desenho:**
+1. A conciliação compara contra `MOV_OPERADORES` (TEF), não `MOVIMENTACAO_CARTAO`.
+2. Comparar dia com sincronização incompleta gera falso "não repassado" — por isso o resultado
+   só considera dias em que o agente já sincronizou (D23 já previa isso; aqui ficou provado).
+3. O casamento por dia+total já resolve 95% dos casos; o NSU serve para APONTAR qual transação
+   divergiu nos 5 dias com diferença.
 
 ## D28 — SHIPAY é o PIX do TEF
 
