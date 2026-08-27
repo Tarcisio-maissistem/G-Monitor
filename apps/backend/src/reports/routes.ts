@@ -257,12 +257,25 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const grandTotal = groups.reduce((s, g) => s + Number(g._sum.value ?? 0), 0);
     const rows = groups.map((g) => ({
       paymentType: g.paymentType,
+      kind: normalizePaymentType(g.paymentType) ?? 'outros', // canonico p/ cor/label no painel
       total: Number(g._sum.value ?? 0),
       count: g._count,
       pct: grandTotal > 0 ? Number(g._sum.value ?? 0) / grandTotal : 0,
     }));
 
-    return { data: { rows, grandTotal }, meta };
+    // Agregado por FORMA canonica (dinheiro/pix/cartao/crediario/outros): junta as variantes
+    // ruidosas do GDOOR ("CARTAO DEBITO", "CARTAO CREDITO", "PIX TEF"...) e resolve a acentuacao
+    // quebrada. E o que o Dashboard colore. Pedido do dono 26/08.
+    const byKindMap = new Map<string, { total: number; count: number }>();
+    for (const r of rows) {
+      const k = byKindMap.get(r.kind) ?? { total: 0, count: 0 };
+      k.total += r.total; k.count += r.count; byKindMap.set(r.kind, k);
+    }
+    const byKind = [...byKindMap.entries()]
+      .map(([kind, v]) => ({ kind, total: v.total, count: v.count, pct: grandTotal > 0 ? v.total / grandTotal : 0 }))
+      .sort((a, b) => b.total - a.total);
+
+    return { data: { rows, byKind, grandTotal }, meta };
   }));
 
   // Mesmo agregado do sales-by-payment, so que no formato que PagamentosPage.tsx espera
@@ -1248,7 +1261,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const hojeIni = new Date(); hojeIni.setUTCHours(0, 0, 0, 0);
     const ontemIni = new Date(hojeIni.getTime() - 86_400_000);
     const ontemFim = new Date(hojeIni.getTime() - 1);
-    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv, vHoje, vOntem, diasDistintos, conferencia] = await Promise.all([
+    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv, vHoje, vOntem, diasDistintos, conferencia, canceladas] = await Promise.all([
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
       // recebido de verdade em caixa no periodo = fluxo realizado (entradas), reaproveita buildCashflow
       buildCashflow(req.user!.tenantId, storeId, from, to, 'day'),
@@ -1260,6 +1273,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: ontemIni, lte: ontemFim } }, _sum: { totalValue: true }, _count: true }),
       prisma.sale.findMany({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, distinct: ['saleDate'], select: { saleDate: true } }),
       buildCashConference(req.user!.tenantId, storeId, from, to),
+      // vendas CANCELADAS no periodo (card do dashboard, pedido do dono 26/08)
+      prisma.sale.aggregate({ where: { ...scope, cancelled: true, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
     ]);
     const nfceDireta = { count: Number(nfceSemPv[0]?.n ?? 0), total: Number(nfceSemPv[0]?.total ?? 0) };
     const hoje = { total: Number(vHoje._sum.totalValue ?? 0), count: vHoje._count };
@@ -1278,6 +1293,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       contasRecebidas: { total: Number(contasReceber._sum.receivedValue ?? 0), count: contasReceber._count },
       contasPagas: { total: Number(contasPagar._sum.paidValue ?? 0), count: contasPagar._count },
       hojeOntem: { hoje, ontem, variacaoPct },
+      canceladas: { total: Number(canceladas._sum.totalValue ?? 0), count: canceladas._count },
       // faturamento do mes sozinho engana quando teve feriado — media por dia trabalhado corrige
       diasTrabalhados,
       mediaDiaria: diasTrabalhados > 0 ? totalPeriodo / diasTrabalhados : 0,
