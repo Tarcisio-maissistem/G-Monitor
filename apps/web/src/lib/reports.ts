@@ -165,6 +165,7 @@ export interface MonthlyGoalResponse {
 // ---------- GET /api/reports/dashboard/today (26/08) ----------
 export interface DashTodayResponse {
   periodo: { from: string; to: string };
+  dadosAte: string | null; // última venda que existe na nuvem (frente da sincronização)
   vendido: { total: number; count: number };
   recebidoCaixa: { total: number };
   contasRecebidas: { total: number; count: number };
