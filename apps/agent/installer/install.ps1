@@ -118,7 +118,9 @@ $config = @{
   updateChannel = $Channel
 } | ConvertTo-Json -Depth 10
 
-Set-Content -Path "$dataDir\agent.json" -Value $config -Encoding utf8
+# SEM BOM. `Set-Content -Encoding utf8` no PowerShell 5.1 grava BOM (EF BB BF) e o agente
+# quebrava no JSON.parse antes de logar qualquer coisa - o servico so ficava "Paused".
+[System.IO.File]::WriteAllText("$dataDir\agent.json", $config, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "Configuracao salva em $dataDir\agent.json"
 

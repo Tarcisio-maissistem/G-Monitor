@@ -36,7 +36,13 @@ export function loadConfig(): AgentConfig {
   if (!fs.existsSync(file)) {
     throw new Error(`Arquivo de configuracao nao encontrado: ${file}`);
   }
-  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  // BOM: o PowerShell 5.1 grava `Set-Content -Encoding utf8` com BOM (EF BB BF) e o JSON.parse
+  // estoura com "Unexpected token '\ufeff'". O agente morria no boot ANTES de escrever qualquer
+  // log — o servico so aparecia como "Paused". Foi o que impediu TODA instalacao nova de
+  // funcionar ate 27/08 (J.Kastros). Config de cliente nao pode derrubar o agente por causa de
+  // 3 bytes invisiveis: tira o BOM e segue.
+  const texto = fs.readFileSync(file, 'utf-8').replace(/^\uFEFF/, '');
+  const raw = JSON.parse(texto);
   return configSchema.parse(raw);
 }
 
