@@ -1576,16 +1576,20 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         paymentDate: { gte: from, lte: to },
         OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }],
       },
-      select: { id: true, value: true, paymentDate: true, paymentType: true },
+      // `especie` = forma BRUTA do GDOOR ('TEF CREDITO', 'CREDITO ENTREGA'). E o unico jeito de
+      // saber se passou na maquininha do TEF: `paymentType` ja vem traduzido pro nome fiscal
+      // (FORMA_XML), onde TEF e ENTREGA viram os dois 'CARTAO CREDITO' e ficam indistinguiveis.
+      select: { id: true, value: true, paymentDate: true, paymentType: true, especie: true },
     });
     const comoPagamento = (p: (typeof pags)[number]) => ({
-      id: p.id, valor: Number(p.value), forma: p.paymentType ?? '',
+      id: p.id, valor: Number(p.value), forma: p.especie || p.paymentType || '',
       data: p.paymentDate.toISOString().slice(0, 10),
       hora: p.paymentDate.toISOString().slice(11, 19),
     });
     const cartao = pags.filter((p) => { const c = feeChannel(p.paymentType); return c === 'pos_debito' || c === 'pos_credito'; });
-    const tef = cartao.filter((p) => normalizeText(p.paymentType).includes('TEF')).map(comoPagamento);
-    const outrasFormas = cartao.filter((p) => !normalizeText(p.paymentType).includes('TEF')).map(comoPagamento);
+    const ehTef = (p: (typeof pags)[number]): boolean => normalizeText(p.especie ?? p.paymentType).includes('TEF');
+    const tef = cartao.filter(ehTef).map(comoPagamento);
+    const outrasFormas = cartao.filter((p) => !ehTef(p)).map(comoPagamento);
 
     const linhas = extrato.linhas.filter((l) => l.autorizada);
     const resultado = conciliar(
