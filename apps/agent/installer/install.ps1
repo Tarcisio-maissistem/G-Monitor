@@ -180,7 +180,7 @@ if ($nssm) {
     # adianta mandar 'start' de novo: e preciso ver POR QUE ele fecha. Rodar o exe na frente
     # mostra o erro na hora (banco inacessivel, caminho do .FDB errado, etc).
     Write-Host ""
-    Write-Host "ATENCAO: o servico ficou com status '$($svc.Status)' — o agente nao conseguiu subir."
+    Write-Host "ATENCAO: o servico ficou com status '$($svc.Status)' - o agente nao conseguiu subir."
     Write-Host "Rode a linha abaixo para ver o motivo na tela:"
     Write-Host "  & '$installDir\gmonitor-agent.exe'"
     Write-Host "O log do servico fica em: $installDir\service.log"
