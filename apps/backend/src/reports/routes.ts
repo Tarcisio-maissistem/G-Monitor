@@ -1264,7 +1264,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const hojeIni = new Date(); hojeIni.setUTCHours(0, 0, 0, 0);
     const ontemIni = new Date(hojeIni.getTime() - 86_400_000);
     const ontemFim = new Date(hojeIni.getTime() - 1);
-    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv, vHoje, vOntem, diasDistintos, conferencia, canceladas] = await Promise.all([
+    const [vendas, recebidoAgg, contasReceber, contasPagar, meta, nfceSemPv, vHoje, vOntem, diasDistintos, conferencia, ultimaVenda, canceladas] = await Promise.all([
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
       // recebido de verdade em caixa no periodo = fluxo realizado (entradas), reaproveita buildCashflow
       buildCashflow(req.user!.tenantId, storeId, from, to, 'day'),
@@ -1276,6 +1276,11 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: ontemIni, lte: ontemFim } }, _sum: { totalValue: true }, _count: true }),
       prisma.sale.findMany({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, distinct: ['saleDate'], select: { saleDate: true } }),
       buildCashConference(req.user!.tenantId, storeId, from, to),
+      // Ate onde o historico ja chegou. O agente sincroniza do mais ANTIGO pro mais novo, entao
+      // uma loja recem-instalada fica meses "para tras" — sem isso o card mostra R$ 0 como se a
+      // loja nao tivesse vendido, em vez de dizer que o dado ainda nao chegou (pedido do dono
+      // 27/08, ao ver a Casa de Carnes zerada em agosto enquanto sincronizava 2025).
+      prisma.sale.findFirst({ where: scope, orderBy: { saleDate: 'desc' }, select: { saleDate: true } }),
       // vendas CANCELADAS no periodo (card do dashboard, pedido do dono 26/08)
       prisma.sale.aggregate({ where: { ...scope, cancelled: true, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
     ]);
@@ -1289,6 +1294,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       periodo: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+      // ultima venda que existe na nuvem — a tela usa pra dizer "ainda sincronizando" em vez
+      // de mostrar R$ 0 como se fosse fato
+      dadosAte: ultimaVenda ? ultimaVenda.saleDate.toISOString().slice(0, 10) : null,
       // vendido = PV + NF-e (SALE_OF_RECORD) + NFC-e diretas (tem pagamento proprio, nao vieram de PV)
       vendido: { total: Number(vendas._sum.totalValue ?? 0) + nfceDireta.total, count: vendas._count + nfceDireta.count },
       nfceSemPv: nfceDireta,

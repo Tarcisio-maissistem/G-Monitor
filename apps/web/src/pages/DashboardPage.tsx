@@ -93,10 +93,32 @@ export function DashboardPage(): JSX.Element {
         </div>
       )}
 
+      {/* Histórico ainda subindo: o agente sincroniza do mais ANTIGO pro mais novo, então uma
+          loja recém-instalada mostra R$ 0 no mês atual. Sem este aviso o card parece dizer que
+          a loja não vendeu nada (pedido do dono 27/08). */}
+      {t && t.vendido.count === 0 && t.dadosAte && t.dadosAte < t.periodo.from && (
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 px-4 py-2.5 rounded-lg text-sm">
+          ⏳ Ainda estamos trazendo o histórico desta loja. O sistema já tem vendas até{' '}
+          <strong>{formatBrDate(t.dadosAte)}</strong> — por isso o período escolhido aparece zerado.
+          Não é que a loja não vendeu: o dado ainda não chegou.
+        </div>
+      )}
+
       {/* Totais do período — o que o dono pediu em primeiro plano */}
       <QueryState query={today}>
         <KpiRow cols={4}>
-          <KpiCard label="Vendido" info="Tudo que a loja vendeu no período: pré-vendas e notas fiscais (NF-e). A NFC-e gerada a partir de uma pré-venda não conta de novo. Não é o que entrou no caixa — veja ‘Recebido em caixa’." value={formatCompactBRL(t?.vendido.total ?? 0)} tone="blue" highlight sub={`${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`} />
+          <KpiCard
+            label="Vendido"
+            info="Tudo que a loja vendeu no período: pré-vendas e notas fiscais (NF-e). A NFC-e gerada a partir de uma pré-venda não conta de novo. Não é o que entrou no caixa — veja ‘Recebido em caixa’."
+            value={formatCompactBRL(t?.vendido.total ?? 0)}
+            tone="blue"
+            highlight
+            sub={
+              t && t.vendido.count === 0 && t.dadosAte && t.dadosAte < t.periodo.from
+                ? `sincronizando — dados até ${formatBrDate(t.dadosAte)}`
+                : `${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`
+            }
+          />
           <KpiCard label="Recebido em caixa" info="Dinheiro que de fato entrou no caixa no período (dinheiro, PIX, cartão e recebimentos). Venda a prazo/fiado só entra aqui quando o cliente paga." value={formatCompactBRL(t?.recebidoCaixa.total ?? 0)} tone="emerald" sub={formatBRL(t?.recebidoCaixa.total ?? 0)} />
           <KpiCard label="Contas recebidas" info="Contas a receber que foram baixadas (pagas pelo cliente) dentro do período, somando o valor recebido." value={formatCompactBRL(t?.contasRecebidas.total ?? 0)} tone="emerald" sub={`${formatInt(t?.contasRecebidas.count ?? 0)} baixas`} />
           <KpiCard label="Contas pagas" info="Contas a pagar que foram baixadas (pagas a fornecedores e despesas) dentro do período." value={formatCompactBRL(t?.contasPagas.total ?? 0)} tone="red" sub={`${formatInt(t?.contasPagas.count ?? 0)} baixas`} />
