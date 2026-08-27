@@ -23,9 +23,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   activeTenantId: null,
   activeTenantName: null,
   promptStorePick: false,
+  // Login vai DIRETO pro dashboard (pedido do dono 27/08). A tela de selecao de empresa que
+  // existia aqui virava um passo obrigatorio toda vez, mesmo pra quem so olha uma loja — e
+  // trocar de empresa ja e possivel a qualquer momento pelo seletor da barra superior.
+  // `promptStorePick` segue no estado (a tela ainda existe) caso se queira reativar.
   login(token, user, tenantId, tenantName) {
     setAccessToken(token);
-    set({ token, user, activeTenantId: tenantId ?? null, activeTenantName: tenantName ?? null, promptStorePick: true });
+    set({ token, user, activeTenantId: tenantId ?? null, activeTenantName: tenantName ?? null, promptStorePick: false });
   },
   // Login silencioso do F5 (refreshSession) — nao dispara a tela de selecao.
   restoreSession(token, user, tenantId, tenantName) {
