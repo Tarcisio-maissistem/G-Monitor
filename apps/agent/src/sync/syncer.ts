@@ -288,7 +288,7 @@ async function syncCardTransactions(cfg: AgentConfig): Promise<number> {
     acquirer: r['acquirer'] != null ? String(r['acquirer']).trim() : null,
     nsu: r['nsu'] != null ? String(r['nsu']).trim() : null,
     authCode: r['auth_code'] != null ? String(r['auth_code']).trim() : null,
-    value: Number(r['value'] ?? 0),
+    value: Number(r['transaction_value'] ?? 0),
     installments: r['installments'] != null ? Number(r['installments']) : null,
     transactionAt: combineDateTime(r['data'], r['hora']),
     // PROCESSADA e 0/1 no Firebird; 0 = cobrou e nao fechou a venda

@@ -200,11 +200,13 @@ export const CATALOG: Record<string, CatalogEntry> = {
   // fechou (achado 27/08: 1 caso em agosto, R$567,80 — o mesmo que a conciliacao apontou).
   'sync-card-transactions-batch': {
     id: 'sync-card-transactions-batch',
+    // ATENCAO: nao usar `AS VALUE` — VALUE e palavra reservada no Firebird e a query inteira
+    // falha com "Token unknown - line 3, column 57, VALUE" (visto em producao 27/08).
     description: 'Pagina de transacoes de cartao (MOVIMENTACAO_CARTAO) para sincronizacao incremental',
     paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
     sql: `
       SELECT FIRST ? M.ID AS SOURCE_ID, M.BANDEIRA AS ACQUIRER, M.NSU AS NSU,
-             M.COD_AUTORIZACAO AS AUTH_CODE, M.VALOR AS VALUE, M.NUMERO_PARCELAS AS INSTALLMENTS,
+             M.COD_AUTORIZACAO AS AUTH_CODE, M.VALOR AS TRANSACTION_VALUE, M.NUMERO_PARCELAS AS INSTALLMENTS,
              M.DATA AS DATA, M.HORA AS HORA, M.PROCESSADA AS PROCESSADA,
              (SELECT FIRST 1 V.ID_MOV_OPERADORES FROM VENDA_PAGAMENTO_CARTAO V
                 WHERE V.ID_MOVIMENTACAO_CARTAO = M.ID) AS PAYMENT_SOURCE_ID
