@@ -129,11 +129,20 @@ export async function coletar(opts: {
 
   let linhas = parseLinhas(html);
   const paginas = Math.min(totalPaginas(html), opts.maxPaginas ?? 60);
-  for (let p = 2; p <= paginas; p++) {
-    const url = `${BASE}/admin/vendas/filtroTodasAsVendas?&periodo=${encodeURIComponent(periodo)}`
-      + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu&page=${p}`;
-    linhas = linhas.concat(parseLinhas(await get(url)));
-    await new Promise((r) => setTimeout(r, 200)); // educado com o portal do fornecedor
+
+  // Paginas 2..N em blocos de 4 em paralelo. Sequencial com 200ms de pausa levava ~90s no mes
+  // inteiro (29 paginas) e estourava o tempo do gateway; em blocos cai pra ~20s. 4 e um meio
+  // termo deliberado: acelera sem martelar o portal do fornecedor.
+  const LOTE = 4;
+  const urlDa = (p: number): string =>
+    `${BASE}/admin/vendas/filtroTodasAsVendas?&periodo=${encodeURIComponent(periodo)}`
+    + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu&page=${p}`;
+
+  for (let inicio = 2; inicio <= paginas; inicio += LOTE) {
+    const bloco: number[] = [];
+    for (let p = inicio; p < inicio + LOTE && p <= paginas; p++) bloco.push(p);
+    const htmls = await Promise.all(bloco.map((p) => get(urlDa(p))));
+    for (const h of htmls) linhas = linhas.concat(parseLinhas(h));
   }
   return { linhas, paginas };
 }
