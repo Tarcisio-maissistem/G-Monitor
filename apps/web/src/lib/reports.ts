@@ -246,3 +246,32 @@ export interface InadimplenciaResponse {
   piores: InadDevedor[]; // ordenado por TEMPO de atraso (quem deve há mais tempo)
   meta: FreshnessMeta;
 }
+
+// ---------- GET /api/reports/conciliacao/previsto (26/08) ----------
+export type FeeChannel = 'pos_debito' | 'pos_credito' | 'pix_tef' | 'pix_estatico';
+export interface FeeRule {
+  channel: FeeChannel;
+  acquirer?: string | null;
+  installments?: number | null;
+  percent: number;
+  fixedValue?: number;
+  daysToReceive?: number;
+}
+export interface PrevistoCanal {
+  channel: FeeChannel;
+  bruto: number;
+  transacoes: number;
+  temRegra: boolean;
+  percent: number | null;
+  taxa: number | null;
+  liquido: number | null;
+  diasParaReceber: number | null;
+}
+export interface PrevistoResponse {
+  periodo: { from: string; to: string };
+  canais: PrevistoCanal[];
+  totals: { bruto: number; taxa: number; liquido: number; brutoSemRegra: number };
+  semTaxaAdquirente: number;
+  regrasCadastradas: number;
+  meta: FreshnessMeta;
+}

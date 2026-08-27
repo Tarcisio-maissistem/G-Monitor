@@ -7,7 +7,7 @@ import { redis } from '../db/redis.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
-import { normalizePaymentType } from './paymentType.js';
+import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
 
 // P4 (26/08, confirmado no Firebird do piloto): a venda de REGISTRO e o PV (pre-venda) e a
 // NF-e 55. A NFC-e 65 e gerada A PARTIR do PV e nao tem pagamento proprio — somar os dois
@@ -1469,6 +1469,73 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       faixas,
       total,
       piores: piores.map((p) => ({ nome: p.nome ?? '(sem nome)', titulos: Number(p.titulos), saldo: Number(p.saldo), diasAtraso: Number(p.dias), vencimentoMaisAntigo: p.desde.toISOString().slice(0, 10) })),
+      meta,
+    };
+  }));
+
+  // ─── Conciliacao bancaria: liquido previsto (Fase 2, 26/08) ────────────────────────
+  // Bruto (o que a loja vendeu no canal) - taxa cadastrada = LIQUIDO PREVISTO. As taxas ficam
+  // em tenant.meta.feeRules (D21: o GDOOR tem TAXAS_CARTAO toda zerada, entao a taxa real so
+  // existe se o lojista cadastrar). Canal sem regra NAO entra no liquido — aparece separado
+  // como "sem taxa cadastrada", porque assumir taxa zero mentiria o liquido pra cima.
+  app.get('/api/reports/conciliacao/previsto', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('conciliacao-previsto', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+
+    const [groups, tenant, meta] = await Promise.all([
+      prisma.payment.groupBy({
+        by: ['paymentType'],
+        where: { tenantId, ...(storeId ? { storeId } : {}), paymentDate: { gte: from, lte: to }, OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }] },
+        _sum: { value: true },
+        _count: true,
+      }),
+      prisma.tenant.findUnique({ where: { id: tenantId }, select: { meta: true } }),
+      getFreshnessMeta(tenantId, storeId),
+    ]);
+
+    interface FeeRule { channel: string; acquirer?: string | null; installments?: number | null; percent: number; fixedValue?: number; daysToReceive?: number }
+    const rules = (((tenant?.meta ?? {}) as Record<string, unknown>).feeRules ?? []) as FeeRule[];
+    // Regra mais especifica ganha. O adquirente (Cielo/Rede) so existe em MOVIMENTACAO_CARTAO,
+    // que ainda nao e sincronizada (Fase 1) — por enquanto casa so as regras curinga.
+    const pickRule = (channel: string): FeeRule | undefined =>
+      rules.filter((r) => r.channel === channel).sort((a, b) => (a.acquirer ? -1 : 1) - (b.acquirer ? -1 : 1))
+        .find((r) => !r.acquirer);
+
+    const acc = new Map<string, { bruto: number; transacoes: number }>();
+    let semCanal = 0; // dinheiro/crediario: nao tem taxa de adquirente, nem entra na conta
+    for (const g of groups) {
+      const total = Number(g._sum.value ?? 0);
+      const ch = feeChannel(g.paymentType);
+      if (!ch) { semCanal += total; continue; }
+      const cur = acc.get(ch) ?? { bruto: 0, transacoes: 0 };
+      cur.bruto += total; cur.transacoes += g._count;
+      acc.set(ch, cur);
+    }
+
+    const canais = FEE_CHANNELS.filter((c) => acc.has(c)).map((channel) => {
+      const { bruto, transacoes } = acc.get(channel)!;
+      const rule = pickRule(channel);
+      if (!rule) return { channel, bruto, transacoes, temRegra: false as const, percent: null, taxa: null, liquido: null, diasParaReceber: null };
+      const taxa = (bruto * rule.percent) / 100 + (rule.fixedValue ?? 0) * transacoes;
+      return { channel, bruto, transacoes, temRegra: true as const, percent: rule.percent, taxa, liquido: bruto - taxa, diasParaReceber: rule.daysToReceive ?? 1 };
+    });
+
+    const comRegra = canais.filter((c) => c.temRegra);
+    const semRegra = canais.filter((c) => !c.temRegra);
+    return {
+      periodo: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+      canais,
+      totals: {
+        bruto: canais.reduce((a, c) => a + c.bruto, 0),
+        // taxa/liquido SO do que tem regra — semRegra fica de fora de proposito
+        taxa: comRegra.reduce((a, c) => a + (c.taxa ?? 0), 0),
+        liquido: comRegra.reduce((a, c) => a + (c.liquido ?? 0), 0),
+        brutoSemRegra: semRegra.reduce((a, c) => a + c.bruto, 0),
+      },
+      semTaxaAdquirente: semCanal, // dinheiro + crediario da propria loja
+      regrasCadastradas: rules.length,
       meta,
     };
   }));
