@@ -43,12 +43,34 @@ $exePath = "$installDir\gmonitor-agent.exe"
 if (Test-Path $exeSource) {
   Copy-Item -Path $exeSource -Destination $exePath -Force
   Write-Host "gmonitor-agent.exe copiado para $installDir"
-} elseif (-not (Test-Path $exePath)) {
+} else {
+  # SEMPRE baixa, mesmo se o exe ja existir. O guard antigo (`elseif -not Test-Path`) mantinha
+  # a versao velha de uma tentativa anterior: na J.Kastros o instalador rodava "com sucesso" e
+  # deixava um agente 0.8.0 no disco, que ficava em loop de auto-update. Quem roda o instalador
+  # quer a versao atual - 58MB uma vez por instalacao e barato perto de depurar versao errada.
   Write-Host "Baixando gmonitor-agent.exe (58 MB) de $SaasUrl ..."
   $prev = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
-  Invoke-WebRequest -Uri "$SaasUrl/downloads/gmonitor-agent.exe" -OutFile $exePath
+  $tmpExe = "$installDir\gmonitor-agent.exe.download"
+  Invoke-WebRequest -Uri "$SaasUrl/downloads/gmonitor-agent.exe" -OutFile $tmpExe -Headers @{"Cache-Control"="no-cache"}
   $ProgressPreference = $prev
-  Write-Host "gmonitor-agent.exe salvo em $installDir"
+  # confere o sha256 do manifesto antes de instalar - binario truncado no meio do caminho nao entra
+  try {
+    $manifesto = Invoke-RestMethod -Uri "$SaasUrl/downloads/latest.json"
+    $sha = (Get-FileHash $tmpExe -Algorithm SHA256).Hash.ToLower()
+    if ($sha -ne $manifesto.sha256) {
+      Remove-Item -Force $tmpExe
+      Write-Error "Download corrompido (sha256 nao confere). Rode o instalador de novo."
+      exit 1
+    }
+    Write-Host "gmonitor-agent.exe v$($manifesto.version) baixado e verificado"
+  } catch {
+    Write-Host "AVISO: nao consegui conferir o sha256 - seguindo com o arquivo baixado"
+  }
+  if (Get-Service -Name GMonitorAgent -ErrorAction SilentlyContinue) {
+    & net stop GMonitorAgent 2>&1 | Out-Null  # solta o arquivo antes de trocar
+  }
+  Move-Item -Force $tmpExe $exePath
+  Remove-Item -Force "$installDir\gmonitor-agent.exe.new" -ErrorAction SilentlyContinue
 }
 
 if (-not $Token -and -not $Cnpj) {

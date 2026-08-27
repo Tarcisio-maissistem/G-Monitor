@@ -1,8 +1,8 @@
 import { logger } from '../logger.js';
-// @ts-expect-error - modulo interno do node-firebird, sem tipos publicos
+// Modulo INTERNO do node-firebird (a partir da v2 ele ja vem com tipos).
 import Xsql from 'node-firebird/lib/wire/xsqlvar.js';
 
-// node-firebird@1.1.10 tem um bug conhecido (comentario "ToDo: with column charset" no
+// node-firebird tem um bug conhecido (verificado ainda presente na v2.15.0) (comentario "ToDo: with column charset" no
 // proprio codigo-fonte, lib/wire/xsqlvar.js): SQLVarString/SQLVarText.decode ignora
 // options.encoding e SEMPRE decodifica CHAR/VARCHAR como UTF8 (Const.DEFAULT_ENCODING,
 // hardcoded). O banco do GDOOR declara charset NONE (sem enforcement) e guarda texto em
