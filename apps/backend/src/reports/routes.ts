@@ -7,7 +7,10 @@ import { redis } from '../db/redis.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
-import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
+import { feeChannel, FEE_CHANNELS, normalizePaymentType, normalizeText } from './paymentType.js';
+import { coletar, CredencialInvalida } from '../conciliacao/getcard.js';
+import { conciliar } from '../conciliacao/matcher.js';
+import { open, isSealed } from '../lib/secretBox.js';
 
 // P4 (26/08, confirmado no Firebird do piloto): a venda de REGISTRO e o PV (pre-venda) e a
 // NF-e 55. A NFC-e 65 e gerada A PARTIR do PV e nao tem pagamento proprio — somar os dois
@@ -1539,6 +1542,67 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       meta,
     };
   }));
+
+  // ─── Conciliacao: extrato do portal x sistema (Fase 3, 27/08) ──────────────────────
+  // Busca o extrato NA HORA (botao "Buscar extrato"), nao por cron: raspagem autenticada
+  // agendada quebra sem ninguem ver (D25). Compara so os dias que o agente ja sincronizou.
+  app.get('/api/reports/conciliacao/extrato', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { meta: true } });
+    const g = (((tenant?.meta ?? {}) as Record<string, unknown>).getcard ?? {}) as { user?: string; senha?: string };
+    if (!g.user || !isSealed(g.senha)) {
+      throw Errors.validation('Cadastre o usuario e a senha do portal em Conciliacao antes de buscar o extrato.');
+    }
+
+    const iso = (d: Date): string => d.toISOString().slice(0, 10);
+    let extrato;
+    try {
+      extrato = await coletar({ user: g.user, password: open(g.senha!), from: iso(from), to: iso(to) });
+    } catch (err) {
+      if (err instanceof CredencialInvalida) throw Errors.validation('O portal recusou o login. Confira usuario e senha em Conciliacao.');
+      logger.error({ err }, 'getcard: falha ao coletar extrato');
+      throw Errors.validation('Nao consegui falar com o portal agora. Tente de novo em alguns minutos.');
+    }
+
+    // pagamentos de cartao do periodo. O portal cobre a maquininha do TEF, entao TEF e o lado
+    // primario; as outras formas de cartao entram como 2a chance (D29).
+    const pags = await prisma.payment.findMany({
+      where: {
+        tenantId, ...(storeId ? { storeId } : {}),
+        paymentDate: { gte: from, lte: to },
+        OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }],
+      },
+      select: { id: true, value: true, paymentDate: true, paymentType: true },
+    });
+    const comoPagamento = (p: (typeof pags)[number]) => ({
+      id: p.id, valor: Number(p.value), forma: p.paymentType ?? '',
+      data: p.paymentDate.toISOString().slice(0, 10),
+      hora: p.paymentDate.toISOString().slice(11, 19),
+    });
+    const cartao = pags.filter((p) => { const c = feeChannel(p.paymentType); return c === 'pos_debito' || c === 'pos_credito'; });
+    const tef = cartao.filter((p) => normalizeText(p.paymentType).includes('TEF')).map(comoPagamento);
+    const outrasFormas = cartao.filter((p) => !normalizeText(p.paymentType).includes('TEF')).map(comoPagamento);
+
+    const linhas = extrato.linhas.filter((l) => l.autorizada);
+    const resultado = conciliar(
+      linhas.map((l) => ({ nsu: l.nsu, valor: l.valor, data: l.data, hora: l.hora, adquirente: l.adquirente, bandeira: l.bandeira, pdv: l.pdv, autorizacao: l.autorizacao })),
+      tef, outrasFormas,
+    );
+
+    const meta = await getFreshnessMeta(tenantId, storeId);
+    return {
+      periodo: { from: iso(from), to: iso(to) },
+      extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas },
+      ...resultado,
+      // so os problemas — a lista inteira pode ter milhares de linhas
+      problemas: resultado.itens.filter((i) => i.estado !== 'conciliado').slice(0, 200),
+      meta,
+    };
+  });
 
   // ─── Conferencia de Caixa (D20, 26/08) ─────────────────────────────────────────────
   // ESPERADO = registrado no expediente (payments kind venda/recebimento do PDV + fundo de
