@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
+import { seal, isSealed } from '../lib/secretBox.js';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
@@ -80,6 +81,35 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
     });
     const updatedMeta = updated.meta as Record<string, unknown>;
     return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [] } };
+  });
+
+  // ─── Integracoes de terceiro (27/08) ───────────────────────────────────────────────
+  // Hoje so o portal GetCard (conciliacao). A SENHA e cifrada com AES-256-GCM (secretBox) e a
+  // API NUNCA a devolve, nem mascarada — devolve `temSenha`. Guardar a senha em claro no meta
+  // seria pior que nao ter cifra nenhuma, porque daria a falsa sensacao de estar protegida.
+  const getcardSchema = z.object({
+    user: z.string().min(3).max(60),
+    // opcional no PATCH: mandar so o usuario mantem a senha ja salva
+    password: z.string().min(1).max(120).optional(),
+  });
+
+  app.get('/api/tenant/integracoes', { preHandler: [requireAuth] }, async (req) => {
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
+    const g = ((tenant?.meta as Record<string, unknown> ?? {}).getcard ?? {}) as { user?: string; senha?: string };
+    return { getcard: { user: g.user ?? null, temSenha: isSealed(g.senha) } };
+  });
+
+  app.put('/api/tenant/integracoes/getcard', { preHandler: [requireAuth, requireCapability('tenant.update'), audit({ action: 'tenant.integracao.getcard', entity: 'tenant' })] }, async (req) => {
+    const body = getcardSchema.parse(req.body);
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
+    const meta = (tenant?.meta as Record<string, unknown>) ?? {};
+    const atual = (meta.getcard ?? {}) as { senha?: string };
+    const getcard = {
+      user: body.user,
+      senha: body.password ? seal(body.password) : atual.senha, // sem senha nova, mantem a antiga
+    };
+    await prisma.tenant.update({ where: { id: req.user!.tenantId }, data: { meta: { ...meta, getcard } as Prisma.InputJsonValue } });
+    return { getcard: { user: getcard.user, temSenha: isSealed(getcard.senha) } };
   });
 
   app.get('/api/tenant/stores', { preHandler: [requireAuth] }, async (req) => {

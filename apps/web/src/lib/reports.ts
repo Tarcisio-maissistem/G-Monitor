@@ -275,3 +275,27 @@ export interface PrevistoResponse {
   regrasCadastradas: number;
   meta: FreshnessMeta;
 }
+
+// ---------- GET /api/reports/conciliacao/extrato (27/08) ----------
+export interface ExtratoLinha { nsu: string; valor: number; data: string; hora: string; adquirente: string; bandeira: string; pdv: string; autorizacao: string }
+export interface PagamentoSistema { id: string; valor: number; data: string; hora: string; forma: string }
+export type EstadoConciliacao = 'conciliado' | 'so_no_extrato' | 'so_no_sistema';
+export interface ItemConciliado {
+  estado: EstadoConciliacao; data: string; valor: number;
+  extrato?: ExtratoLinha; sistema?: PagamentoSistema; via?: 'direto' | 'outra_forma';
+}
+export interface ConciliacaoDia { data: string; extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number; diferenca: number; completo: boolean }
+export interface ExtratoResponse {
+  periodo: { from: string; to: string };
+  extrato: { linhas: number; autorizadas: number; paginas: number };
+  porDia: ConciliacaoDia[];
+  totais: {
+    extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number;
+    conciliados: number; soNoExtrato: number; soNoSistema: number;
+    valorSoNoExtrato: number; valorSoNoSistema: number;
+  };
+  diasIgnorados: string[];
+  problemas: ItemConciliado[];
+  meta: FreshnessMeta;
+}
+export interface IntegracoesResponse { getcard: { user: string | null; temSenha: boolean } }
