@@ -1591,15 +1591,24 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const tef = cartao.filter(ehTef).map(comoPagamento);
     const outrasFormas = cartao.filter((p) => !ehTef(p)).map(comoPagamento);
 
+    // Fronteira do sync: o ultimo dia que TEM pagamento na nuvem pode estar pela metade
+    // (o agente anda por ID crescente). Desse dia em diante nao se julga nada.
+    const ultimo = await prisma.payment.findFirst({
+      where: { tenantId, ...(storeId ? { storeId } : {}) },
+      orderBy: { paymentDate: 'desc' }, select: { paymentDate: true },
+    });
+    const fronteira = ultimo ? ultimo.paymentDate.toISOString().slice(0, 10) : undefined;
+
     const linhas = extrato.linhas.filter((l) => l.autorizada);
     const resultado = conciliar(
       linhas.map((l) => ({ nsu: l.nsu, valor: l.valor, data: l.data, hora: l.hora, adquirente: l.adquirente, bandeira: l.bandeira, pdv: l.pdv, autorizacao: l.autorizacao })),
-      tef, outrasFormas,
+      tef, outrasFormas, fronteira,
     );
 
     const meta = await getFreshnessMeta(tenantId, storeId);
     return {
       periodo: { from: iso(from), to: iso(to) },
+      fronteiraSync: fronteira ?? null,
       extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas },
       ...resultado,
       // so os problemas — a lista inteira pode ter milhares de linhas
