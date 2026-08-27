@@ -66,9 +66,11 @@ if (Test-Path $exeSource) {
   } catch {
     Write-Host "AVISO: nao consegui conferir o sha256 - seguindo com o arquivo baixado"
   }
-  if (Get-Service -Name GMonitorAgent -ErrorAction SilentlyContinue) {
-    & net stop GMonitorAgent 2>&1 | Out-Null  # solta o arquivo antes de trocar
-  }
+  # Stop-Service (cmdlet) e nao `net stop`: o net.exe escreve em stderr quando o servico ja
+  # esta parado ("O servico nao foi iniciado") e, com ErrorActionPreference=Stop, o PowerShell
+  # ABORTA o instalador ali mesmo - foi o que aconteceu na Ferragista em 27/08. O cmdlet
+  # respeita -ErrorAction e simplesmente segue.
+  Stop-Service -Name GMonitorAgent -Force -ErrorAction SilentlyContinue
   Move-Item -Force $tmpExe $exePath
   Remove-Item -Force "$installDir\gmonitor-agent.exe.new" -ErrorAction SilentlyContinue
 }
