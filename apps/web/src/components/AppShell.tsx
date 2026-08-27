@@ -78,6 +78,14 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         <TenantSelector compact />
         <ThemeToggle className="text-base" />
         <NotificationBell align="right" />
+        <button
+          onClick={logout}
+          aria-label="Sair"
+          title="Sair"
+          className="shrink-0 rounded-lg p-2 hover:bg-slate-800 text-base leading-none"
+        >
+          ⏻
+        </button>
       </header>
 
       {mobileOpen && <div className="lg:hidden fixed inset-0 bg-black/40 z-[45]" onClick={() => setMobileOpen(false)} />}
@@ -86,7 +94,10 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
           224px fixa cabia mal em tablet, cortava coluna de valor nas tabelas — achado com
           screenshot real em 768px). */}
       <aside
-        className={`w-56 bg-slate-900 text-slate-100 flex flex-col fixed lg:static inset-y-0 left-0 z-50 transition-transform duration-200 ${
+        // lg:sticky + h-screen: no desktop a sidebar era `static` dentro de um flex, entao
+        // ESTICAVA junto com a pagina (4000px numa tela de 800) e o rodape com "Sair" ficava
+        // fora da tela — o dono nao achava o botao de deslogar. Agora ela acompanha a rolagem.
+        className={`w-56 bg-slate-900 text-slate-100 flex flex-col fixed lg:sticky lg:top-0 lg:h-screen inset-y-0 left-0 z-50 transition-transform duration-200 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -123,14 +134,16 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             </button>
           ))}
         </nav>
-        <div className="px-5 py-3 border-t border-slate-700 text-xs">
-          <div className="text-slate-200 font-medium">{user?.name}</div>
-          <div className="text-slate-400 truncate">{user?.email}</div>
+        {/* Rodape fixo da sidebar. O "Sair" era um <a> sublinhado de 23x16px na borda da tela:
+            alvo pequeno demais pro dedo e invisivel no desktop. Agora e botao de largura cheia. */}
+        <div className="shrink-0 px-4 py-3 border-t border-slate-700 text-xs">
+          <div className="text-slate-200 font-medium truncate">{user?.name}</div>
+          <div className="text-slate-400 truncate mb-2">{user?.email}</div>
           <button
             onClick={logout}
-            className="mt-2 text-slate-300 hover:text-white text-xs underline"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-red-600 text-slate-200 hover:text-white text-sm font-medium transition-colors"
           >
-            Sair
+            <span aria-hidden>⏻</span> Sair
           </button>
         </div>
       </aside>
