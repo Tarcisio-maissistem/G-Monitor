@@ -52,6 +52,8 @@ estatico, nao a do cartao — cadastrar essa primeiro e o que mais muda o numero
 
 ## Pendências com o Tarcísio
 - [x] Credencial do portal recebida 27/08 — fluxo mapeado (D26)
-- [ ] **Explicar a divergencia do dia 06/08** (portal 97/R$8.528 x GDOOR 43/R$4.781): o PDV 002
-      esta integrado ao GDOOR desta maquina? ha venda passada direto na maquininha?
+- [x] Divergencia explicada 27/08: era comparacao com a tabela ERRADA (MOVIMENTACAO_CARTAO).
+      Contra TEF CREDITO+DEBITO o portal bate centavo a centavo em 18 dos 23 dias completos.
+- [ ] Investigar com o dono os 5 dias com divergencia real (R$694,30 no mes): 03, 05, 21, 22 e
+      23/08 — no dia 23 o GDOOR tem uma transacao a MAIS que o portal
 - [ ] Taxas reais para cadastrar: POS por adquirente (Cielo/Rede), PIX TEF (Shipay), PIX estático
