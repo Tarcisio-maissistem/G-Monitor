@@ -110,8 +110,10 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
 
           {res.diasIgnorados.length > 0 && (
             <div className="bg-slate-50 border text-slate-600 px-4 py-2.5 rounded-lg text-xs">
-              {res.diasIgnorados.length} dia(s) fora da comparação por ainda não terem sincronizado:{' '}
-              {res.diasIgnorados.map((d) => formatBrDate(d)).join(', ')}. Sem isso, esses dias apareceriam como cobrança perdida.
+              {res.diasIgnorados.length} dia(s) fora da comparação porque o sistema ainda não terminou de
+              receber os dados: {res.diasIgnorados.map((d) => formatBrDate(d)).join(', ')}.
+              {res.fronteiraSync ? ` O sistema tem dados até ${formatBrDate(res.fronteiraSync)}.` : ''}
+              {' '}Sem isso, esses dias apareceriam como cobrança perdida.
             </div>
           )}
 

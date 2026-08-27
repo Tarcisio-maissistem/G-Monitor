@@ -52,6 +52,14 @@ export function conciliar(
    * Nao entram nos totais do sistema nem geram `so_no_sistema` — so absorvem sobra.
    */
   fallback: PagamentoSistema[] = [],
+  /**
+   * Dia 'YYYY-MM-DD' a partir do qual NAO se julga nada (inclusive). E o ultimo dia que o
+   * agente sincronizou: como o sync anda por ID crescente, esse dia pode estar pela METADE.
+   * Sem isso, 24/08 (57 de 103 pagamentos sincronizados) gerou 46 falsas "cobrancas perdidas"
+   * em producao (27/08) — o dia nao estava vazio, entao a regra de "dia sem pagamento" nao
+   * pegava. Dia incompleto e pior que dia vazio: parece dado bom.
+   */
+  ignorarAPartirDe?: string,
 ): ResultadoConciliacao {
   const dias = [...new Set([...extrato.map((e) => e.data), ...sistema.map((s) => s.data)])].filter(Boolean).sort();
   const itens: ItemConciliado[] = [];
@@ -63,7 +71,7 @@ export function conciliar(
     const si = sistema.filter((s) => s.data === dia);
     const exValor = ex.reduce((a, e) => a + e.valor, 0);
     const siValor = si.reduce((a, s) => a + s.valor, 0);
-    const completo = si.length > 0;
+    const completo = si.length > 0 && !(ignorarAPartirDe && dia >= ignorarAPartirDe);
     porDia.push({ data: dia, extratoQtd: ex.length, extratoValor: exValor, sistemaQtd: si.length, sistemaValor: siValor, diferenca: exValor - siValor, completo });
     if (!completo) { diasIgnorados.push(dia); continue; }
 

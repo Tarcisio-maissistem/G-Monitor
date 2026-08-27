@@ -82,3 +82,29 @@ describe('conciliar com outras formas de cartao (D29)', () => {
     expect(r.totais.valorSoNoExtrato).toBeCloseTo(567.80, 2);
   });
 });
+
+describe('fronteira de sincronizacao', () => {
+  it('NAO julga o dia que pode estar pela metade (o caso real de 24/08)', () => {
+    // o dia tem pagamento, mas so parte dele foi sincronizada: julgar geraria falsa acusacao
+    const r = conciliar(
+      [ex(100, '10:00:00', '2026-08-24'), ex(200, '17:00:00', '2026-08-24')],
+      [si(100, '10:00:00', '2026-08-24')],
+      [],
+      '2026-08-24',
+    );
+    expect(r.diasIgnorados).toEqual(['2026-08-24']);
+    expect(r.totais.soNoExtrato).toBe(0);
+  });
+
+  it('julga normalmente os dias ANTERIORES a fronteira', () => {
+    const r = conciliar(
+      [ex(100, '10:00:00', '2026-08-22'), ex(567.80, '11:08:43', '2026-08-22')],
+      [si(100, '10:00:00', '2026-08-22')],
+      [],
+      '2026-08-24',
+    );
+    expect(r.diasIgnorados).toEqual([]);
+    expect(r.totais.soNoExtrato).toBe(1);
+    expect(r.totais.valorSoNoExtrato).toBeCloseTo(567.80, 2);
+  });
+});

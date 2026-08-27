@@ -287,6 +287,7 @@ export interface ItemConciliado {
 export interface ConciliacaoDia { data: string; extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number; diferenca: number; completo: boolean }
 export interface ExtratoResponse {
   periodo: { from: string; to: string };
+  fronteiraSync: string | null; // ultimo dia sincronizado: dele em diante nada e julgado
   extrato: { linhas: number; autorizadas: number; paginas: number };
   porDia: ConciliacaoDia[];
   totais: {
