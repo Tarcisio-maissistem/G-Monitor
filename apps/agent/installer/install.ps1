@@ -81,23 +81,29 @@ if (-not $Token -and -not $Cnpj) {
   if (Test-Path $exePath) {
     Write-Host "Procurando o CNPJ da loja no banco do GDOOR..."
     try {
-      $detectJson = & $exePath --detect-cnpj --fdb-path $FdbPath --fb-user $FbUser --fb-password $FbPassword 2>$null
-      $detected = $detectJson | ConvertFrom-Json
+      # Pega so a ULTIMA linha nao vazia: se o exe imprimir qualquer coisa antes (log), o
+      # ConvertFrom-Json receberia varios objetos e devolveria um ARRAY - ai $detected.value
+      # vira lista e o CNPJ sai com espaco na frente, que a API rejeita.
+      $saida = & $exePath --detect-cnpj --fdb-path $FdbPath --fb-user $FbUser --fb-password $FbPassword 2>$null
+      $ultima = ($saida | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Last 1)
+      $detected = $ultima | ConvertFrom-Json
     } catch {
       $detected = $null
     }
     if ($detected -and $detected.value) {
-      $formatted = $detected.value -replace '(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})', '$1.$2.$3/$4-$5'
+      # Trim de seguranca: CNPJ com espaco nao casa com o cadastro no servidor.
+      $digitos = ([string]$detected.value).Trim() -replace '[^0-9]', ''
+      $formatted = $digitos -replace '(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})', '$1.$2.$3/$4-$5'
       # Confirma antes de registrar: cadastrar a loja na empresa ERRADA da um trabalhao pra
       # desfazer. Enter aceita, entao o caminho feliz e uma tecla.
-      $confirm = Read-Host "CNPJ encontrado: $formatted (tabela $($detected.table)) - usar este? [S/n]"
+      $confirm = Read-Host "CNPJ encontrado: $formatted (tabela $(([string]$detected.table).Trim())) - usar este? [S/n]"
       if ($confirm -eq '' -or $confirm -match '^[sS]') { $Cnpj = $formatted }
     } else {
       Write-Host "Nao encontrei o CNPJ no banco (o GDOOR desta maquina pode ter outro layout)."
     }
   }
   if (-not $Cnpj) {
-    $Cnpj = Read-Host "Digite o CNPJ da empresa"
+    $Cnpj = (Read-Host "Digite o CNPJ da empresa").Trim()
   }
 }
 
@@ -108,6 +114,7 @@ if (-not $Token -and -not $Cnpj) {
 
 if ($Cnpj) {
   Write-Host "Validando CNPJ $Cnpj em $SaasUrl..."
+  $Cnpj = ([string]$Cnpj).Trim()
   $body = @{ cnpj = $Cnpj } | ConvertTo-Json
   try {
     $resp = Invoke-RestMethod -Uri "$SaasUrl/api/agents/register-by-cnpj" -Method Post -ContentType "application/json" -Body $body
