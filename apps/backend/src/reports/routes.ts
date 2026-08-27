@@ -1543,6 +1543,43 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     };
   }));
 
+  // Alerta "cobrou e nao virou venda" (27/08). Vem direto do GDOOR, sem depender do portal:
+  // MOVIMENTACAO_CARTAO.PROCESSADA = 0 e o proprio sistema dizendo que a transacao de cartao
+  // foi capturada mas nao virou pagamento. Achado em agosto: 1 caso (R$567,80) — exatamente o
+  // mesmo que a conciliacao contra o extrato apontou, mas aqui aparece sem clicar em nada.
+  app.get('/api/reports/conciliacao/cobrancas-sem-venda', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cobrancas-sem-venda', async (req) => {
+    const query = baseFilters.parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+    const scope = { tenantId, ...(storeId ? { storeId } : {}) };
+
+    const [linhas, totalPeriodo, meta] = await Promise.all([
+      prisma.cardTransaction.findMany({
+        where: { ...scope, processed: false, transactionAt: { gte: from, lte: to } },
+        orderBy: { transactionAt: 'desc' },
+        take: 100,
+      }),
+      prisma.cardTransaction.count({ where: { ...scope, transactionAt: { gte: from, lte: to } } }),
+      getFreshnessMeta(tenantId, storeId),
+    ]);
+
+    return {
+      periodo: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+      // sem transacao nenhuma = o agente ainda nao sincronizou essa tabela (agente < 0.9.0);
+      // e diferente de "nao ha cobranca perdida" e a tela precisa saber a diferenca
+      semDado: totalPeriodo === 0,
+      total: linhas.length,
+      valor: linhas.reduce((a, l) => a + Number(l.value), 0),
+      transacoesNoPeriodo: totalPeriodo,
+      linhas: linhas.map((l) => ({
+        id: l.id, acquirer: l.acquirer, nsu: l.nsu, authCode: l.authCode,
+        value: Number(l.value), transactionAt: l.transactionAt.toISOString(),
+      })),
+      meta,
+    };
+  }));
+
   // ─── Conciliacao: extrato do portal x sistema (Fase 3, 27/08) ──────────────────────
   // Busca o extrato NA HORA (botao "Buscar extrato"), nao por cron: raspagem autenticada
   // agendada quebra sem ninguem ver (D25). Compara so os dias que o agente ja sincronizou.
