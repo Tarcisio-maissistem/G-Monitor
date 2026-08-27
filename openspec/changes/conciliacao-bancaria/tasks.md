@@ -66,5 +66,10 @@ estatico, nao a do cartao — cadastrar essa primeiro e o que mais muda o numero
       03/08 (R$49,43) era `CREDITO ENTREGA`, nao divergencia; sobrou UMA real: **R$ 567,80 em
       22/08** (PROCESSADA=0, sem virar venda). Unica do mes inteiro.
 - [ ] Mostrar ao dono a transacao de R$567,80 (22/08 11:08, NSU 002319, aut 684385, CIELO)
-- [ ] Alerta proprio no painel: `MOVIMENTACAO_CARTAO.PROCESSADA = 0` (nao depende do portal)
+- [x] Alerta proprio no painel (27/08, PR #80 aprovado pelo dono + #81): migration
+      `card_transactions` aplicada via Management API (anon SEM grant, RLS ligada, registrada
+      em _prisma_migrations); agente v0.9.0 sincroniza MOVIMENTACAO_CARTAO;
+      `GET /api/reports/conciliacao/cobrancas-sem-venda` + faixa vermelha na tela.
+      "Sem dado" (agente antigo) e tratado diferente de "nada a reportar" — a tela nao diz
+      que esta tudo certo quando so nao sincronizou ainda.
 - [ ] Taxas reais para cadastrar: POS por adquirente (Cielo/Rede), PIX TEF (Shipay), PIX estático
