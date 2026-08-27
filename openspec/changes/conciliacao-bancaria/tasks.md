@@ -34,14 +34,22 @@ Marcar `[x]` só com prova (tsc/vitest/curl/screenshot). Nada de "parece certo".
 - [x] Mapear login (CSRF + sessao), filtro por periodo e paginacao — validado com curl
 - [x] Mapear as 14 colunas e as armadilhas do parser (adquirente+bandeira concatenados, R$ br)
 - [x] Descobrir que o portal cobre 2 PDVs e diverge do GDOOR no mesmo dia (D27)
-- [ ] `secretBox.ts` no backend (AES-256-GCM, `INTEGRACAO_ENC_KEY`) + gerar a chave no .env do ms-gestor
-- [ ] Migration `IntegrationCredential` (portal TEF: usuário + senha cifrada)
-- [ ] Tela Configurações -> Integrações: usuário/senha do portal; API devolve só `temSenha`
-- [ ] Coletor: login (CSRF+sessão) -> filtro de datas -> CSV; HTML de login => erro explícito (D25)
-- [ ] Parser do CSV (depende do arquivo real: colunas de NSU/bruto/taxa/líquido/data)
-- [ ] Migration `AcquirerStatement` + casamento por `(adquirente, NSU, data)` (D22)
-- [ ] Tela Conciliação (aba "Conciliado"): 4 estados (D23), com filtro e total por estado
-- [ ] Prova: conciliar um dia real e conferir 3 transações na mão contra o portal
+- [x] `secretBox.ts` (AES-256-GCM, `INTEGRACAO_ENC_KEY`) + 4 testes; chave gerada NO ms-gestor
+- [x] Credencial em `tenant.meta.getcard` com a senha cifrada — SEM migration; API devolve
+      apenas `temSenha`, nunca a senha (nem mascarada)
+- [x] Coletor `getcard.ts`: login (CSRF+sessão) -> POST do período -> paginação por GET.
+      HTML de login => `CredencialInvalida` explícita, nunca lista vazia (D25)
+- [x] Parser puro com 8 testes sobre HTML REAL do portal
+- [x] `matcher.ts`: casa por (dia+valor), hora como desempate, 2ª chance em outras formas de
+      cartão (D29); 10 testes, incluindo os 2 casos reais de agosto
+- [x] Sem tabela de extrato: a comparação é feita na hora e devolvida — histórico fica pra depois
+- [x] `GET /api/reports/conciliacao/extrato` + seção na tela `/conciliacao`
+- [x] **PROVA EM PRODUÇÃO (27/08, período 21-23/08):** 346 transações colhidas do portal,
+      **345 conciliadas**, e a única apontada foi exatamente a R$ 567,80 de 22/08 11:08:43
+      (CIELO, NSU 002319) — a mesma que a investigação manual tinha achado. Zero falso positivo,
+      zero dia ignorado. Tela conferida em 390px.
+- [ ] Período longo (mês inteiro = 29 páginas) estoura o tempo do gateway: quebrar a coleta em
+      blocos ou rodar em segundo plano. Por ora usar períodos de até ~1 semana.
 
 ## Achado de negócio (26/08)
 
