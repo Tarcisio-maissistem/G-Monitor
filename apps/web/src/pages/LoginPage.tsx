@@ -46,6 +46,10 @@ function LoginForm({ onSignupClick }: { onSignupClick(): void }): JSX.Element {
         body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
       });
       login(res.accessToken, res.user, res.tenant.id, res.tenant.name);
+      // Vai pro dashboard. Antes quem levava pra ca era a tela de selecao de empresa; sem ela,
+      // a rota continuava em '#/login' e o app renderizava "pagina nao encontrada" logo apos
+      // entrar. Sem replace: usar Voltar depois de sair nao te joga de volta pra dentro.
+      window.location.hash = '#/';
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'erro';
       if (msg === '2fa_required') {
