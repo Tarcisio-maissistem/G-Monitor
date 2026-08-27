@@ -18,13 +18,17 @@ Marcar `[x]` só com prova (tsc/vitest/curl/screenshot). Nada de "parece certo".
 - [ ] Agente v0.9.0 + auto-update publicado
 - [ ] Prova: contar transações sincronizadas x 8.561 do Firebird
 
-## Fase 2 — taxas e líquido previsto (não depende de credencial)
-- [ ] Migration `FeeRule` + CRUD `/api/fees` (só admin/gestor)
-- [ ] Tela Configurações -> Taxas: POS por adquirente/tipo/parcelas, PIX TEF (Shipay), PIX estático
-- [ ] `GET /api/reports/conciliacao/previsto`: bruto, taxa, líquido, data prevista, por adquirente/canal
-- [ ] Transação sem regra de taxa aparece como "sem taxa cadastrada" e fica FORA do líquido (D25)
-- [ ] Tela Conciliação (aba "Previsto") mobile-first + ⓘ nos cards
-- [ ] Prova: bruto do período bate com `sales-by-payment` (cartão + PIX)
+## Fase 2 — taxas e líquido previsto — EM PROD 26/08 (PR #69)
+- [x] `feeChannel()` separa pos_debito/pos_credito/pix_tef/pix_estatico (+3 testes, 32/32)
+- [x] Taxas em `tenant.meta.feeRules` — SEM migration (mesmo padrao de monthlyGoal); decidido
+      assim pra nao gastar o gate de banco numa config de poucas linhas por loja
+- [x] `GET /api/reports/conciliacao/previsto`: bruto, taxa, liquido e dias por canal
+- [x] Canal sem regra fica FORA do liquido e e sinalizado (D21)
+- [x] Tela `/conciliacao` mobile-first: cards + lista por canal + cadastro das taxas
+- [x] Prova (26/08, Piloto, agosto): debito 231.342,24 + credito 229.353,45 = 460.695,69 bate
+      com `cartao` do sales-by-payment; pix_tef 6.005,71 + pix_estatico 302.439,17 = 308.444,88
+      bate com `pix`. Screenshot 390px sem erro.
+- [ ] Taxa por ADQUIRENTE (Cielo x Rede) — depende da Fase 1 (MOVIMENTACAO_CARTAO)
 
 ## Fase 3 — extrato do portal TEF (BLOQUEADA: precisa da credencial do dono)
 - [ ] `secretBox.ts` no backend (AES-256-GCM, `INTEGRACAO_ENC_KEY`) + gerar a chave no .env do ms-gestor
@@ -35,6 +39,13 @@ Marcar `[x]` só com prova (tsc/vitest/curl/screenshot). Nada de "parece certo".
 - [ ] Migration `AcquirerStatement` + casamento por `(adquirente, NSU, data)` (D22)
 - [ ] Tela Conciliação (aba "Conciliado"): 4 estados (D23), com filtro e total por estado
 - [ ] Prova: conciliar um dia real e conferir 3 transações na mão contra o portal
+
+## Achado de negócio (26/08)
+
+No Piloto, em agosto, o **PIX estático é o maior canal eletronico**: R$ 302.439 (1.359
+transacoes) — mais que debito (R$ 231.342) e que credito (R$ 229.353). O PIX pelo TEF/Shipay
+e residual: R$ 6.005 (48 transacoes). Ou seja, a taxa que mais pesa no bolso e a do PIX
+estatico, nao a do cartao — cadastrar essa primeiro e o que mais muda o numero.
 
 ## Pendências com o Tarcísio
 - [ ] **Credencial do portal** (usuário/senha) OU um **CSV de exemplo** já baixado — sem isso
