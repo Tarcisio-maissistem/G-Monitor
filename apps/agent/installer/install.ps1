@@ -73,17 +73,13 @@ if (Test-Path $exeSource) {
   Remove-Item -Force "$installDir\gmonitor-agent.exe.new" -ErrorAction SilentlyContinue
 }
 
-if (-not $Token -and -not $Cnpj) {
-  # Pergunta o CNPJ ANTES da autodeteccao (que varre o Firebird e demora). Quem sabe o CNPJ
-  # digita e pula a busca; quem nao sabe da Enter e cai na deteccao automatica. Pedido do dono
-  # 26/08: na J.Kastros a deteccao ficou consultando muito tempo sem nada na tela.
-  $typed = Read-Host "Digite o CNPJ da empresa e Enter (ou so Enter para eu tentar achar sozinho no GDOOR)"
-  if ($typed -and $typed.Trim() -ne '') { $Cnpj = $typed.Trim() }
-}
-
+# Sem -Token e sem -Cnpj: DETECTA primeiro, pergunta so se falhar. A ordem antiga (perguntar
+# antes) existia porque a deteccao levava ~90s varrendo 53 tabelas; desde 27/08 ela consulta a
+# tabela EMITENTE (o emitente fiscal do GDOOR = a propria loja) e responde em ~3s, entao nao ha
+# mais motivo pra fazer o instalador digitar nada. Medido nos bancos reais das duas lojas.
 if (-not $Token -and -not $Cnpj) {
   if (Test-Path $exePath) {
-    Write-Host "Nenhum CNPJ informado - tentando achar sozinho no banco do GDOOR (pode levar ~1 min)..."
+    Write-Host "Procurando o CNPJ da loja no banco do GDOOR..."
     try {
       $detectJson = & $exePath --detect-cnpj --fdb-path $FdbPath --fb-user $FbUser --fb-password $FbPassword 2>$null
       $detected = $detectJson | ConvertFrom-Json
@@ -92,14 +88,16 @@ if (-not $Token -and -not $Cnpj) {
     }
     if ($detected -and $detected.value) {
       $formatted = $detected.value -replace '(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})', '$1.$2.$3/$4-$5'
-      $confirm = Read-Host "CNPJ encontrado: $formatted (tabela $($detected.table).$($detected.column)) - usar este? (S/n)"
-      if ($confirm -eq '' -or $confirm -match '^[sS]') {
-        $Cnpj = $formatted
-      }
+      # Confirma antes de registrar: cadastrar a loja na empresa ERRADA da um trabalhao pra
+      # desfazer. Enter aceita, entao o caminho feliz e uma tecla.
+      $confirm = Read-Host "CNPJ encontrado: $formatted (tabela $($detected.table)) - usar este? [S/n]"
+      if ($confirm -eq '' -or $confirm -match '^[sS]') { $Cnpj = $formatted }
+    } else {
+      Write-Host "Nao encontrei o CNPJ no banco (o GDOOR desta maquina pode ter outro layout)."
     }
   }
   if (-not $Cnpj) {
-    $Cnpj = Read-Host "Nao consegui achar o CNPJ sozinho - digite o CNPJ da empresa"
+    $Cnpj = Read-Host "Digite o CNPJ da empresa"
   }
 }
 
