@@ -1280,7 +1280,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       // uma loja recem-instalada fica meses "para tras" — sem isso o card mostra R$ 0 como se a
       // loja nao tivesse vendido, em vez de dizer que o dado ainda nao chegou (pedido do dono
       // 27/08, ao ver a Casa de Carnes zerada em agosto enquanto sincronizava 2025).
-      prisma.sale.findFirst({ where: scope, orderBy: { saleDate: 'desc' }, select: { saleDate: true } }),
+      //
+      // Ordena por createdAt (quando a linha ENTROU aqui), nao por saleDate: a 1a versao usava
+      // MAX(saleDate) e UMA venda solta com data futura jogava o indicador meses pra frente —
+      // dizia "dados ate 16/08" com apenas 4 vendas de agosto sincronizadas, enquanto o grosso
+      // ainda estava em julho. O ultimo registro inserido e onde o ponteiro do sync realmente esta.
+      prisma.sale.findFirst({ where: scope, orderBy: { createdAt: 'desc' }, select: { saleDate: true } }),
       // vendas CANCELADAS no periodo (card do dashboard, pedido do dono 26/08)
       prisma.sale.aggregate({ where: { ...scope, cancelled: true, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
     ]);
