@@ -54,6 +54,9 @@ estatico, nao a do cartao — cadastrar essa primeiro e o que mais muda o numero
 - [x] Credencial do portal recebida 27/08 — fluxo mapeado (D26)
 - [x] Divergencia explicada 27/08: era comparacao com a tabela ERRADA (MOVIMENTACAO_CARTAO).
       Contra TEF CREDITO+DEBITO o portal bate centavo a centavo em 18 dos 23 dias completos.
-- [ ] Investigar com o dono os 5 dias com divergencia real (R$694,30 no mes): 03, 05, 21, 22 e
-      23/08 — no dia 23 o GDOOR tem uma transacao a MAIS que o portal
+- [x] Investigados os 5 dias (27/08, D29): 05/21/23 casaram 100% com a coluna de data certa;
+      03/08 (R$49,43) era `CREDITO ENTREGA`, nao divergencia; sobrou UMA real: **R$ 567,80 em
+      22/08** (PROCESSADA=0, sem virar venda). Unica do mes inteiro.
+- [ ] Mostrar ao dono a transacao de R$567,80 (22/08 11:08, NSU 002319, aut 684385, CIELO)
+- [ ] Alerta proprio no painel: `MOVIMENTACAO_CARTAO.PROCESSADA = 0` (nao depende do portal)
 - [ ] Taxas reais para cadastrar: POS por adquirente (Cielo/Rede), PIX TEF (Shipay), PIX estático
