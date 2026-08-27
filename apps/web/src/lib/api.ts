@@ -59,12 +59,37 @@ export async function refreshSession(): Promise<RefreshResponse | null> {
   }
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+// Refresh SERIALIZADO (uma unica chamada em voo). O access token vale 15min; quando expira no
+// meio do uso, varias queries batem 401 ao mesmo tempo. Se cada uma chamasse /auth/refresh, o
+// refresh token (que ROTACIONA a cada uso) seria reusado em paralelo -> o backend detecta reuse
+// e derruba a familia inteira (ver memoria sso-relogin-familia-tokens). Entao todas compartilham
+// a MESMA promise de refresh. Corrige o "Token invalido ou expirado" que aparecia apos 15min
+// (pedido do dono 26/08).
+let refreshInFlight: Promise<RefreshResponse | null> | null = null;
+function refreshOnce(): Promise<RefreshResponse | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshSession().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
 
   const res = await fetch(path, { ...init, headers, credentials: 'include' });
+
+  // 401 = access token expirado: renova UMA vez pelo cookie de refresh e repete a chamada.
+  // Nao tenta no proprio /auth/refresh (evita recursao) nem numa 2a rodada.
+  if (res.status === 401 && !retried && path !== '/api/auth/refresh') {
+    const refreshed = await refreshOnce();
+    if (refreshed) {
+      setAccessToken(refreshed.accessToken);
+      return api<T>(path, init, true);
+    }
+  }
+
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(body.error?.message ?? `Erro ${res.status}`);
