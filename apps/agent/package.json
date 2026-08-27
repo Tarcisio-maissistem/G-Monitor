@@ -23,7 +23,7 @@
     "@gmonitor/rpc-contracts": "workspace:*",
     "@gmonitor/shared": "workspace:*",
     "msgpackr": "^1.11.2",
-    "node-firebird": "^1.1.9",
+    "node-firebird": "^2.15.0",
     "pino": "^9.6.0",
     "ws": "^8.18.0",
     "zod": "^3.24.1"

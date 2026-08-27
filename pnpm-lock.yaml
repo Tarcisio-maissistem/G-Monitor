@@ -51,8 +51,8 @@ importers:
         specifier: ^1.11.2
         version: 1.12.1
       node-firebird:
-        specifier: ^1.1.9
-        version: 1.1.10
+        specifier: ^2.15.0
+        version: 2.15.0
       pino:
         specifier: ^9.6.0
         version: 9.14.0
@@ -1449,10 +1449,6 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  big-integer@1.6.52:
-    resolution: {integrity: sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==}
-    engines: {node: '>=0.6'}
-
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
@@ -2263,9 +2259,6 @@ packages:
     resolution: {integrity: sha512-9ie8ItPR6tjY5uYJh8K/Zrv/RMZ5VOlOWvtZdEHYSTFKZfIBPQa9tOAEeAWhd+AnIneLJ22w5fjOYtoutpWq5w==}
     engines: {node: '>=18'}
 
-  long@5.3.2:
-    resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
-
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
@@ -2378,8 +2371,8 @@ packages:
   node-fetch-native@1.6.7:
     resolution: {integrity: sha512-g9yhqoedzIUm0nTnTqAQvueMPVOuIY16bqgAJJC8XOOubYFNwz6IER9qs0Gq2Xd0+CecCKFjtdDTMA4u4xG06Q==}
 
-  node-firebird@1.1.10:
-    resolution: {integrity: sha512-/U2DmoqidETduvh7Y+fX7dlo5aWc0Vjd7wjSnDQWZ/L0UFVJiOKtR8fPRbvn+3HxQiYeexco8W2Px2hdrDT2Ew==}
+  node-firebird@2.15.0:
+    resolution: {integrity: sha512-INefK1re/tZiu8jQRc5VRD1RM/TNiWghrhN0tYLiW0nDRk6ue25S6VeUJvWROXnLe0h7/3YZusZrcQb94az0/g==}
 
   node-gyp-build-optional-packages@5.2.2:
     resolution: {integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==}
@@ -4342,8 +4335,6 @@ snapshots:
 
   baseline-browser-mapping@2.11.18: {}
 
-  big-integer@1.6.52: {}
-
   binary-extensions@2.3.0: {}
 
   bintrees@1.0.2: {}
@@ -5192,8 +5183,6 @@ snapshots:
       strip-ansi: 7.2.0
       wrap-ansi: 9.0.2
 
-  long@5.3.2: {}
-
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
@@ -5298,10 +5287,7 @@ snapshots:
 
   node-fetch-native@1.6.7: {}
 
-  node-firebird@1.1.10:
-    dependencies:
-      big-integer: 1.6.52
-      long: 5.3.2
+  node-firebird@2.15.0: {}
 
   node-gyp-build-optional-packages@5.2.2:
     dependencies:
