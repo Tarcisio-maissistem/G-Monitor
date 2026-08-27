@@ -167,6 +167,7 @@ model Store {
   customers  Customer[]
   products   Product[]
   cashClosings CashClosing[]
+  cardTransactions CardTransaction[]
   syncState  SyncState[]
   payables   Payable[]
   receivables Receivable[]
@@ -439,6 +440,34 @@ model CashClosingSpecies {
 }
 
 // ─── Audit + notifications + billing ────────────────────────────────────────
+
+// Transacoes de cartao capturadas pelo GDOOR (MOVIMENTACAO_CARTAO). Espelho local do que a
+// maquininha registrou — inclusive o que NAO virou venda. `processada = false` e o sinal de
+// "cobrou o cliente e nao fechou a venda": em agosto/2026 havia exatamente 1 (R$567,80), a
+// mesma que a conciliacao contra o portal apontou. Ter isso aqui permite alertar NA HORA, sem
+// depender de raspar o portal do fornecedor.
+model CardTransaction {
+  id            String   @id @default(cuid())
+  tenantId      String
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id])
+  sourceId      String   // MOVIMENTACAO_CARTAO.ID
+  acquirer      String?  // BANDEIRA no GDOOR = adquirente (CIELO/REDE/SHIPAY)
+  nsu           String?
+  authCode      String?
+  value         Decimal  @db.Decimal(14, 2)
+  installments  Int?
+  transactionAt DateTime // DATA + HORA combinados
+  processed     Boolean  @default(true)
+  // id do pagamento (MOV_OPERADORES) via VENDA_PAGAMENTO_CARTAO; null = nunca virou pagamento
+  paymentSourceId String?
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, storeId, sourceId])
+  @@index([tenantId, storeId, transactionAt])
+  @@index([tenantId, storeId, processed])
+  @@map("card_transactions")
+}
 
 model AuditLog {
   id        String   @id @default(cuid())
