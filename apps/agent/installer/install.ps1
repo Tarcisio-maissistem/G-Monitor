@@ -159,6 +159,13 @@ if ($nssm) {
   }
   & $n install GMonitorAgent "$installDir\gmonitor-agent.exe" 2>&1 | Out-Null
   & $n set GMonitorAgent AppDirectory $installDir 2>&1 | Out-Null
+  # LOG do servico. Sem isto o agente que morre no boot nao deixa rastro nenhum e o servico so
+  # aparece como "Paused" - foi o que cegou o diagnostico na J.Kastros em 27/08. Rotaciona em
+  # 10MB pra nao encher o disco da loja.
+  & $n set GMonitorAgent AppStdout "$installDir\service.log" 2>&1 | Out-Null
+  & $n set GMonitorAgent AppStderr "$installDir\service.log" 2>&1 | Out-Null
+  & $n set GMonitorAgent AppRotateFiles 1 2>&1 | Out-Null
+  & $n set GMonitorAgent AppRotateBytes 10485760 2>&1 | Out-Null
   & $n set GMonitorAgent AppExit Default Restart 2>&1 | Out-Null
   & $n set GMonitorAgent AppRestartDelay 5000 2>&1 | Out-Null
   & $n set GMonitorAgent Start SERVICE_AUTO_START 2>&1 | Out-Null
@@ -169,7 +176,14 @@ if ($nssm) {
   if ($svc -and $svc.Status -eq 'Running') {
     Write-Host "Servico GMonitorAgent instalado e RODANDO (auto-update ligado)."
   } else {
-    Write-Host "Servico GMonitorAgent instalado. Status atual: $($svc.Status). Se nao estiver Running, rode: $n start GMonitorAgent"
+    # 'Paused' = o NSSM desistiu porque o agente fechou sozinho varias vezes seguidas. Nao
+    # adianta mandar 'start' de novo: e preciso ver POR QUE ele fecha. Rodar o exe na frente
+    # mostra o erro na hora (banco inacessivel, caminho do .FDB errado, etc).
+    Write-Host ""
+    Write-Host "ATENCAO: o servico ficou com status '$($svc.Status)' — o agente nao conseguiu subir."
+    Write-Host "Rode a linha abaixo para ver o motivo na tela:"
+    Write-Host "  & '$installDir\gmonitor-agent.exe'"
+    Write-Host "O log do servico fica em: $installDir\service.log"
   }
 } else {
   Write-Host "nssm nao encontrado. Baixe em nssm.cc, coloque nssm.exe ao lado deste script e rode de novo - ou rode na mao:"
