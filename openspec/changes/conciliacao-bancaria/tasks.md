@@ -30,7 +30,10 @@ Marcar `[x]` só com prova (tsc/vitest/curl/screenshot). Nada de "parece certo".
       bate com `pix`. Screenshot 390px sem erro.
 - [ ] Taxa por ADQUIRENTE (Cielo x Rede) — depende da Fase 1 (MOVIMENTACAO_CARTAO)
 
-## Fase 3 — extrato do portal TEF (BLOQUEADA: precisa da credencial do dono)
+## Fase 3 — extrato do portal TEF (DESBLOQUEADA 27/08 — fluxo mapeado e validado, D26)
+- [x] Mapear login (CSRF + sessao), filtro por periodo e paginacao — validado com curl
+- [x] Mapear as 14 colunas e as armadilhas do parser (adquirente+bandeira concatenados, R$ br)
+- [x] Descobrir que o portal cobre 2 PDVs e diverge do GDOOR no mesmo dia (D27)
 - [ ] `secretBox.ts` no backend (AES-256-GCM, `INTEGRACAO_ENC_KEY`) + gerar a chave no .env do ms-gestor
 - [ ] Migration `IntegrationCredential` (portal TEF: usuário + senha cifrada)
 - [ ] Tela Configurações -> Integrações: usuário/senha do portal; API devolve só `temSenha`
@@ -48,6 +51,7 @@ e residual: R$ 6.005 (48 transacoes). Ou seja, a taxa que mais pesa no bolso e a
 estatico, nao a do cartao — cadastrar essa primeiro e o que mais muda o numero.
 
 ## Pendências com o Tarcísio
-- [ ] **Credencial do portal** (usuário/senha) OU um **CSV de exemplo** já baixado — sem isso
-      não dá para escrever o parser nem testar o coletor
+- [x] Credencial do portal recebida 27/08 — fluxo mapeado (D26)
+- [ ] **Explicar a divergencia do dia 06/08** (portal 97/R$8.528 x GDOOR 43/R$4.781): o PDV 002
+      esta integrado ao GDOOR desta maquina? ha venda passada direto na maquininha?
 - [ ] Taxas reais para cadastrar: POS por adquirente (Cielo/Rede), PIX TEF (Shipay), PIX estático
