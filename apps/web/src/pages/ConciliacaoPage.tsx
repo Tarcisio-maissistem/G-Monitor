@@ -7,6 +7,7 @@ import type { PrevistoResponse, FeeRule, FeeChannel } from '../lib/reports';
 import { FEE_CHANNEL_LABEL, FEE_CHANNEL_COLOR, FEE_CHANNELS } from '../lib/feeChannels';
 import { PageContainer, PageHeader, KpiRow, KpiCard, DateRangeFilter, DataQualityBanner, QueryState } from '../components/ui';
 import { ExtratoConciliacao } from '../components/dashboard/ExtratoConciliacao';
+import { CobrancasSemVenda } from '../components/dashboard/CobrancasSemVenda';
 import { useToast } from '../components/Toast';
 import { Spinner } from '../components/Spinner';
 
@@ -100,6 +101,8 @@ export function ConciliacaoPage(): JSX.Element {
             </p>
           )}
         </section>
+
+        <CobrancasSemVenda range={range} />
 
         <ExtratoConciliacao range={range} />
 

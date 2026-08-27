@@ -18,6 +18,7 @@ const syncBatchSchema = z.object({
     'products',
     'cashClosings',
     'cashClosingSpecies',
+    'cardTransactions',
     'payables',
     'receivables',
   ]),
@@ -270,6 +271,28 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
         );
         break;
       }
+
+      case 'cardTransactions':
+        persisted = await bulkUpsert(
+          'card_transactions',
+          ['tenantId', 'storeId', 'sourceId', 'acquirer', 'nsu', 'authCode', 'value', 'installments', 'transactionAt', 'processed', 'paymentSourceId', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            acquirer: r.acquirer ? String(r.acquirer) : null,
+            nsu: r.nsu ? String(r.nsu) : null,
+            authCode: r.authCode ? String(r.authCode) : null,
+            value: Number(r.value ?? 0),
+            installments: r.installments != null ? Number(r.installments) : null,
+            transactionAt: r.transactionAt ? new Date(String(r.transactionAt)) : new Date(),
+            processed: r.processed !== false,
+            paymentSourceId: r.paymentSourceId ? String(r.paymentSourceId) : null,
+            createdAt: new Date(),
+          })),
+        );
+        break;
 
       case 'payables':
         persisted = await bulkUpsert(

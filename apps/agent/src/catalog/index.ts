@@ -195,6 +195,24 @@ export const CATALOG: Record<string, CatalogEntry> = {
       ORDER BY E.ID ASC
     `,
   },
+  // MOVIMENTACAO_CARTAO: o que a maquininha registrou, INCLUSIVE o que nao virou venda.
+  // PROCESSADA=0 + sem vinculo em VENDA_PAGAMENTO_CARTAO = cobrou o cliente e a venda nao
+  // fechou (achado 27/08: 1 caso em agosto, R$567,80 — o mesmo que a conciliacao apontou).
+  'sync-card-transactions-batch': {
+    id: 'sync-card-transactions-batch',
+    description: 'Pagina de transacoes de cartao (MOVIMENTACAO_CARTAO) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? M.ID AS SOURCE_ID, M.BANDEIRA AS ACQUIRER, M.NSU AS NSU,
+             M.COD_AUTORIZACAO AS AUTH_CODE, M.VALOR AS VALUE, M.NUMERO_PARCELAS AS INSTALLMENTS,
+             M.DATA AS DATA, M.HORA AS HORA, M.PROCESSADA AS PROCESSADA,
+             (SELECT FIRST 1 V.ID_MOV_OPERADORES FROM VENDA_PAGAMENTO_CARTAO V
+                WHERE V.ID_MOVIMENTACAO_CARTAO = M.ID) AS PAYMENT_SOURCE_ID
+      FROM MOVIMENTACAO_CARTAO M
+      WHERE M.ID > ?
+      ORDER BY M.ID ASC
+    `,
+  },
   'ping-db': {
     id: 'ping-db',
     description: 'Health check Firebird',

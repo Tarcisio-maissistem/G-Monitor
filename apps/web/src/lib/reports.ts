@@ -300,3 +300,15 @@ export interface ExtratoResponse {
   meta: FreshnessMeta;
 }
 export interface IntegracoesResponse { getcard: { user: string | null; temSenha: boolean } }
+
+// ---------- GET /api/reports/conciliacao/cobrancas-sem-venda (27/08) ----------
+export interface CobrancaSemVenda { id: string; acquirer: string | null; nsu: string | null; authCode: string | null; value: number; transactionAt: string }
+export interface CobrancasSemVendaResponse {
+  periodo: { from: string; to: string };
+  semDado: boolean; // agente ainda não sincroniza a tabela (< v0.9.0) — diferente de "nada a reportar"
+  total: number;
+  valor: number;
+  transacoesNoPeriodo: number;
+  linhas: CobrancaSemVenda[];
+  meta: FreshnessMeta;
+}

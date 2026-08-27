@@ -276,6 +276,31 @@ async function syncCashClosings(cfg: AgentConfig): Promise<number> {
   return persisted;
 }
 
+async function syncCardTransactions(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+  const entry = resolveReport('sync-card-transactions-batch')!;
+  const afterId = Number(getCheckpoint('cardTransactions') ?? '0');
+  const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, afterId]);
+  if (rows.length === 0) return 0;
+  const camelRows = rows.map((r) => ({
+    sourceId: String(r['source_id']),
+    acquirer: r['acquirer'] != null ? String(r['acquirer']).trim() : null,
+    nsu: r['nsu'] != null ? String(r['nsu']).trim() : null,
+    authCode: r['auth_code'] != null ? String(r['auth_code']).trim() : null,
+    value: Number(r['value'] ?? 0),
+    installments: r['installments'] != null ? Number(r['installments']) : null,
+    transactionAt: combineDateTime(r['data'], r['hora']),
+    // PROCESSADA e 0/1 no Firebird; 0 = cobrou e nao fechou a venda
+    processed: Number(r['processada'] ?? 1) === 1,
+    paymentSourceId: r['payment_source_id'] != null ? String(r['payment_source_id']) : null,
+  }));
+  const lastId = String(rows[rows.length - 1]!['source_id']);
+  const { persisted } = await postBatch(cfg, 'cardTransactions', camelRows, lastId);
+  setCheckpoint('cardTransactions', lastId);
+  return persisted;
+}
+
 async function syncCashClosingSpecies(cfg: AgentConfig): Promise<number> {
   const pool = getFirebirdPool();
   if (!pool) return 0;
@@ -336,7 +361,7 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
         logger.error({ err }, 'sync tick failed (payables)');
       }
       // D20 Conferencia de Caixa: fechamentos (pai) antes das especies (filhas resolvem FK)
-      for (const [name, fn] of [['cashClosings', syncCashClosings], ['cashClosingSpecies', syncCashClosingSpecies]] as const) {
+      for (const [name, fn] of [['cashClosings', syncCashClosings], ['cashClosingSpecies', syncCashClosingSpecies], ['cardTransactions', syncCardTransactions]] as const) {
         try {
           const persisted = await fn(cfg);
           if (persisted > 0) logger.info({ table: name, persisted }, 'sync tick');
