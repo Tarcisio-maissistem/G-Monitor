@@ -172,6 +172,7 @@ export interface DashTodayResponse {
   nfceSemPv: { count: number; total: number }; // P4: NFC-e direta sem pre-venda (anomalia)
   // onda 1 dos cards do Gdoor Relatorios antigo (26/08)
   hojeOntem: { hoje: { total: number; count: number }; ontem: { total: number; count: number }; variacaoPct: number | null };
+  canceladas: { total: number; count: number };
   diasTrabalhados: number;
   mediaDiaria: number;
   caixaFisico: { esperado: number; contado: number; quebra: number; fechamentos: number; comQuebra: number };

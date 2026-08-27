@@ -15,7 +15,6 @@ interface NavItem {
 export const NAV: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: '📊' },
   { label: 'Meta Mensal', path: '/meta-mensal', icon: '🎯' },
-  { label: 'Vendas', path: '/vendas', icon: '🛒' },
   { label: 'Pagamentos', path: '/pagamentos', icon: '💳' },
   { label: 'Financeiro', path: '/financeiro', icon: '💰' },
   // Fluxo de Caixa e DRE logo apos Financeiro (D18) — rotas entram em App.tsx na Fase 3.

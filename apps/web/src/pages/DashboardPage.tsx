@@ -16,6 +16,8 @@ import { SellerRanking } from '../components/dashboard/SellerRanking';
 import { FinancialPosition } from '../components/dashboard/FinancialPosition';
 import { WeekdayChart } from '../components/dashboard/WeekdayChart';
 import { Inadimplencia } from '../components/dashboard/Inadimplencia';
+import { EntradasSaidasChart } from '../components/dashboard/EntradasSaidasChart';
+import { payStyle } from '../lib/paymentColors';
 
 interface SalesSummary {
   data: { quantity: number; total: number; ticket: number; workingDays: number; uniqueCustomers: number };
@@ -25,7 +27,11 @@ interface AbcProducts {
   data: { rows: { productCode: string | null; description: string | null; quantity: number; value: number; accPct: number; klass: 'A' | 'B' | 'C' }[]; grandTotal: number };
 }
 interface SalesByPayment {
-  data: { rows: { paymentType: string; total: number; count: number; pct: number }[]; grandTotal: number };
+  data: {
+    rows: { paymentType: string; kind: string; total: number; count: number; pct: number }[];
+    byKind: { kind: string; total: number; count: number; pct: number }[]; // agregado por forma canônica
+    grandTotal: number;
+  };
 }
 
 const KLASS_COLOR: Record<string, string> = { A: 'text-green-700 bg-green-50', B: 'text-blue-700 bg-blue-50', C: 'text-slate-600 bg-slate-50' };
@@ -78,9 +84,12 @@ export function DashboardPage(): JSX.Element {
       {/* Status do agente: última sincronização + botão Atualizar (no lugar do alerta seco
           de "agente offline"). Detalhes de caixa ficam na tela de Fluxo de Caixa. */}
       <AgentStatus meta={today.data?.meta} />
+      {/* NFC-e direta (sem passar pela pré-venda): informativo, NÃO é erro (decisão do dono
+          26/08) — a NFC-e direta também dá baixa no estoque, no financeiro e entra no mesmo
+          caixa. O fluxo padrão é PV → converte em NFC-e; isto só sinaliza quantas fugiram dele. */}
       {t && t.nfceSemPv.count > 0 && (
-        <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-lg text-sm">
-          ⚠ {t.nfceSemPv.count} NFC-e emitida{t.nfceSemPv.count > 1 ? 's' : ''} direto no caixa, sem passar pela pré-venda ({formatBRL(t.nfceSemPv.total)}). Já está no faturamento — mas não deveria acontecer.
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 px-4 py-2.5 rounded-lg text-sm">
+          ℹ {t.nfceSemPv.count} NFC-e emitida{t.nfceSemPv.count > 1 ? 's' : ''} direto no caixa, sem passar pela pré-venda ({formatBRL(t.nfceSemPv.total)}). Está tudo no faturamento e no caixa — apenas fora do fluxo padrão (venda pelo PV e depois NFC-e).
         </div>
       )}
 
@@ -127,8 +136,9 @@ export function DashboardPage(): JSX.Element {
       {/* linha secundária: métricas de venda. Média diária = por dia TRABALHADO (feriado não
           derruba a média, como no relatório antigo). */}
       {s && s.quantity > 0 && t && (
-        <KpiRow cols={4}>
+        <KpiRow cols={5}>
           <KpiCard label="Ticket médio" info="Valor médio por venda no período (vendido ÷ quantidade de vendas)." value={formatBRL(s.ticket)} compact />
+          <KpiCard label="Canceladas" info="Vendas canceladas no período (quantidade e valor). Não entram no faturamento." value={formatInt(t.canceladas.count)} tone={t.canceladas.count > 0 ? 'red' : 'default'} compact sub={t.canceladas.count > 0 ? formatBRL(t.canceladas.total) : 'nenhuma'} />
           <KpiCard label="Dias trabalhados" info="Dias do período em que houve pelo menos uma venda. Feriado ou dia fechado não conta." value={formatInt(t.diasTrabalhados)} compact />
           <KpiCard label="Média diária" info="Vendido no período dividido pelos dias trabalhados — mostra o ritmo real da loja sem o feriado derrubar a média." value={formatCompactBRL(t.mediaDiaria)} compact sub={formatBRL(t.mediaDiaria)} />
           <KpiCard label="Clientes únicos" info="Quantos clientes diferentes (identificados na venda) compraram no período. Venda sem cliente informado não conta." value={formatInt(s.uniqueCustomers)} compact />
@@ -149,27 +159,36 @@ export function DashboardPage(): JSX.Element {
       </div>
       <SellerRanking from={from} to={to} />
 
-      {/* Formas de pagamento: lista + pizza */}
+      {/* Entradas × Saídas do período (pedido do dono 26/08) */}
+      <EntradasSaidasChart from={from} to={to} />
+
+      {/* Formas de pagamento: lista colorida por forma + pizza (agregado por forma canônica,
+          cada barra com sua cor — pedido do dono 26/08). */}
       <section className="bg-white rounded-xl shadow-sm border p-5">
         <h3 className="font-semibold text-slate-700 mb-4">Formas de Pagamento</h3>
-        <QueryState query={payments} empty={payments.data && payments.data.data.rows.length === 0 ? `Nenhum pagamento em ${mesLabel}.` : undefined}>
-          {payments.data && payments.data.data.rows.length > 0 && (
+        <QueryState query={payments} empty={payments.data && payments.data.data.byKind.length === 0 ? `Nenhum pagamento em ${mesLabel}.` : undefined}>
+          {payments.data && payments.data.data.byKind.length > 0 && (
             <div className="grid sm:grid-cols-2 gap-4 items-center">
               <div className="space-y-2">
-                {payments.data.data.rows.slice(0, 6).map((r) => (
-                  <div key={r.paymentType} className="flex items-center gap-2">
-                    <span className="text-sm text-slate-600 flex-1 min-w-0 truncate">{r.paymentType}</span>
-                    <div className="w-16 sm:w-24 bg-slate-100 rounded-full h-2 shrink-0">
-                      <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${(r.pct * 100).toFixed(1)}%` }} />
+                {payments.data.data.byKind.map((r) => {
+                  const st = payStyle(r.kind);
+                  return (
+                    <div key={r.kind} className="flex items-center gap-2">
+                      {/* bolinha da cor + nome = identidade textual, cor é reforço (dataviz) */}
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: st.color }} />
+                      <span className="text-sm text-slate-600 flex-1 min-w-0 truncate">{st.label}</span>
+                      <div className="w-16 sm:w-24 bg-slate-100 rounded-full h-2 shrink-0">
+                        <div className="h-2 rounded-full" style={{ width: `${(r.pct * 100).toFixed(1)}%`, background: st.color }} />
+                      </div>
+                      <span className="text-sm font-medium text-slate-700 w-20 text-right shrink-0">{formatBRL(r.total)}</span>
                     </div>
-                    <span className="text-sm font-medium text-slate-700 w-20 text-right shrink-0">{formatBRL(r.total)}</span>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="pt-2 border-t text-sm font-semibold text-slate-700 flex justify-between">
                   <span>Total</span><span>{formatBRL(payments.data.data.grandTotal)}</span>
                 </div>
               </div>
-              <PaymentMethodsChart rows={payments.data.data.rows} />
+              <PaymentMethodsChart rows={payments.data.data.byKind} />
             </div>
           )}
         </QueryState>

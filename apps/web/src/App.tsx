@@ -9,7 +9,6 @@ import { ContasPagarPage } from './pages/ContasPagarPage';
 import { ContasReceberPage } from './pages/ContasReceberPage';
 import { EmpresasPage } from './pages/EmpresasPage';
 import { UsuariosPage } from './pages/UsuariosPage';
-import { VendasPage } from './pages/VendasPage';
 import { ProdutosPage } from './pages/ProdutosPage';
 import { ClientesPage } from './pages/ClientesPage';
 import { PagamentosPage } from './pages/PagamentosPage';
@@ -93,7 +92,6 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/' || path === '') return <DashboardPage />;
   if (path === '/contas-pagar') return <ContasPagarPage />;
   if (path === '/contas-receber') return <ContasReceberPage />;
-  if (path === '/vendas') return <VendasPage />;
   if (path === '/produtos') return <ProdutosPage />;
   if (path === '/clientes') return <ClientesPage />;
   if (path === '/pagamentos') return <PagamentosPage />;
