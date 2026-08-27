@@ -12,6 +12,11 @@ import { detectCnpj } from './detectCnpj.js';
 // Imprime JSON puro no stdout de proposito: o PowerShell so precisa fazer
 // ConvertFrom-Json na saida, sem parsear log nenhum.
 async function runDetectCnpj(): Promise<void> {
+  // Cala o logger: neste modo a saida e LIDA por um script (o instalador faz ConvertFrom-Json).
+  // O log ia pro mesmo stdout, entao o PowerShell recebia DOIS objetos JSON, virava array e o
+  // CNPJ saia com espaco na frente ("  61.952.894/0001-04") — a API entao respondia
+  // "CNPJ nao encontrado". Saida de maquina nao se mistura com log. (J.Kastros, 27/08)
+  logger.level = 'silent';
   const args = process.argv.slice(2);
   const get = (flag: string, def?: string): string | undefined => {
     const i = args.indexOf(flag);
