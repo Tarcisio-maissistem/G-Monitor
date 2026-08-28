@@ -73,18 +73,26 @@ describe('normalizeText', () => {
 });
 
 describe('feeChannel', () => {
-  it('separa debito de credito no POS', () => {
-    expect(feeChannel('CARTãO DéBITO')).toBe('pos_debito');
-    expect(feeChannel('CARTãO CRéDITO')).toBe('pos_credito');
+  it('separa TEF de maquininha avulsa (literais reais da J.Kastros)', () => {
+    expect(feeChannel('TEF CREDITO')).toBe('tef_credito');
+    expect(feeChannel('TEF DEBITO')).toBe('tef_debito');
+    expect(feeChannel('CREDITO ENTREGA')).toBe('pos_credito');
+    expect(feeChannel('DEBITO ENTREGA')).toBe('pos_debito');
+    expect(feeChannel('CREDITO TEF')).toBe('tef_credito'); // ordem invertida existe em prod
   });
-  it('separa PIX do TEF (Shipay) do PIX estatico', () => {
-    expect(feeChannel('PAGAMENTO INSTANTâNEO (PIX)')).toBe('pix_tef');
-    expect(feeChannel('PAGAMENTO INSTANTâNEO ESTATICO (PIX)')).toBe('pix_estatico');
+  it('separa PIX do TEF do PIX estatico', () => {
+    expect(feeChannel('PIX TEF')).toBe('pix_tef');
+    expect(feeChannel('PIX ENTREGA')).toBe('pix_estatico');
+    expect(feeChannel(null, 'PAGAMENTO INSTANTâNEO ESTATICO (PIX)')).toBe('pix_estatico');
+  });
+  it('usa o paymentType so quando nao ha especie', () => {
+    expect(feeChannel(null, 'CARTãO CRéDITO')).toBe('pos_credito');
+    expect(feeChannel('', 'CARTãO DéBITO')).toBe('pos_debito');
   });
   it('nao cobra taxa de dinheiro nem de crediario da loja', () => {
     expect(feeChannel('DINHEIRO')).toBeNull();
+    expect(feeChannel('PRAZO')).toBeNull();
     expect(feeChannel('A PRAZO / CRéDITO LOJA')).toBeNull();
-    expect(feeChannel('CARTãO DA LOJA, CREDIáRIO DIGITAL, OUTROS CREDIáRIOS')).toBeNull();
     expect(feeChannel(null)).toBeNull();
   });
 });

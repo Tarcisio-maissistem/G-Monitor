@@ -7,7 +7,7 @@ import { redis } from '../db/redis.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
-import { feeChannel, FEE_CHANNELS, normalizePaymentType, normalizeText } from './paymentType.js';
+import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
 import { coletar, CredencialInvalida } from '../conciliacao/getcard.js';
 import { conciliar } from '../conciliacao/matcher.js';
 import { open, isSealed } from '../lib/secretBox.js';
@@ -1501,8 +1501,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const tenantId = req.user!.tenantId;
 
     const [groups, tenant, meta] = await Promise.all([
+      // agrupa por ESPECIE (forma bruta): e o unico campo que separa TEF de maquininha avulsa
       prisma.payment.groupBy({
-        by: ['paymentType'],
+        by: ['especie', 'paymentType'],
         where: { tenantId, ...(storeId ? { storeId } : {}), paymentDate: { gte: from, lte: to }, OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }] },
         _sum: { value: true },
         _count: true,
@@ -1523,7 +1524,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     let semCanal = 0; // dinheiro/crediario: nao tem taxa de adquirente, nem entra na conta
     for (const g of groups) {
       const total = Number(g._sum.value ?? 0);
-      const ch = feeChannel(g.paymentType);
+      const ch = feeChannel(g.especie, g.paymentType);
       if (!ch) { semCanal += total; continue; }
       const cur = acc.get(ch) ?? { bruto: 0, transacoes: 0 };
       cur.bruto += total; cur.transacoes += g._count;
@@ -1636,10 +1637,11 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       data: p.paymentDate.toISOString().slice(0, 10),
       hora: p.paymentDate.toISOString().slice(11, 19),
     });
-    const cartao = pags.filter((p) => { const c = feeChannel(p.paymentType); return c === 'pos_debito' || c === 'pos_credito'; });
-    const ehTef = (p: (typeof pags)[number]): boolean => normalizeText(p.especie ?? p.paymentType).includes('TEF');
-    const tef = cartao.filter(ehTef).map(comoPagamento);
-    const outrasFormas = cartao.filter((p) => !ehTef(p)).map(comoPagamento);
+    // O portal cobre a maquininha do TEF; as outras formas de cartao entram como 2a chance (D29).
+    const canalDe = (p: (typeof pags)[number]) => feeChannel(p.especie, p.paymentType);
+    const cartao = pags.filter((p) => { const c = canalDe(p); return c != null && c.endsWith('debito') || c != null && c.endsWith('credito'); });
+    const tef = cartao.filter((p) => canalDe(p)?.startsWith('tef_')).map(comoPagamento);
+    const outrasFormas = cartao.filter((p) => !canalDe(p)?.startsWith('tef_')).map(comoPagamento);
 
     // Fronteira do sync: o ultimo dia que TEM pagamento na nuvem pode estar pela metade
     // (o agente anda por ID crescente). Desse dia em diante nao se julga nada.

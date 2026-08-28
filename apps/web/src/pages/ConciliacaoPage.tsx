@@ -200,6 +200,8 @@ function TaxasCard({ rules, loading, onSave }: { rules: FeeRule[]; loading: bool
 
 function blank(): Record<FeeChannel, { percent: string; fixedValue: string; daysToReceive: string }> {
   return {
+    tef_debito: { percent: '', fixedValue: '0', daysToReceive: '1' },
+    tef_credito: { percent: '', fixedValue: '0', daysToReceive: '30' },
     pos_debito: { percent: '', fixedValue: '0', daysToReceive: '1' },
     pos_credito: { percent: '', fixedValue: '0', daysToReceive: '30' },
     pix_tef: { percent: '', fixedValue: '0', daysToReceive: '1' },
