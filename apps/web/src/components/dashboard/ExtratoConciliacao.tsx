@@ -5,6 +5,7 @@ import { formatBRL, formatCompactBRL, formatInt, formatBrDate } from '../../lib/
 import type { DateRange } from '../../lib/period';
 import type { ExtratoResponse, IntegracoesResponse } from '../../lib/reports';
 import { KpiRow, KpiCard, Badge } from '../ui';
+import { CustoPorBandeiraCard } from './TaxasContrato';
 import { useToast } from '../Toast';
 import { Spinner } from '../Spinner';
 
@@ -115,6 +116,15 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
               {res.fronteiraSync ? ` O sistema tem dados até ${formatBrDate(res.fronteiraSync)}.` : ''}
               {' '}Sem isso, esses dias apareceriam como cobrança perdida.
             </div>
+          )}
+
+          {/* custo EXATO: o extrato traz a bandeira, entao nao ha estimativa aqui */}
+          {res.custo && (res.custo.porBandeira.length > 0) && (
+            res.regrasCadastradas === 0
+              ? <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-lg text-sm">
+                  Nenhuma taxa cadastrada — cadastre a tabela do seu contrato abaixo para ver quanto sobra líquido.
+                </div>
+              : <CustoPorBandeiraCard custo={res.custo} />
           )}
 
           {res.problemas.length === 0 ? (

@@ -40,7 +40,22 @@ const feeRuleSchema = z.object({
   daysToReceive: z.number().int().min(0).max(180).default(1),
 });
 
+// Taxa por ADQUIRENTE + BANDEIRA + MODALIDADE (27/08) — fiel ao contrato da loja. Substitui o
+// feeRules por canal, que nao conseguia representar "Elo debito 1,23% e Elo credito 3,23% na
+// mesma Cielo". `bandeira: null` = curinga do adquirente/modalidade.
+const taxaAdquirenteSchema = z.object({
+  acquirer: z.string().min(2).max(20),
+  bandeira: z.string().max(30).nullable().optional(),
+  modalidade: z.enum(['debito', 'credito', 'pix']),
+  percent: z.number().min(0).max(100),
+  fixedValue: z.number().min(0).default(0),
+  daysToReceive: z.number().int().min(0).max(180).default(1),
+  parcelasDe: z.number().int().min(1).max(24).nullable().optional(),
+  parcelasAte: z.number().int().min(1).max(24).nullable().optional(),
+});
+
 const settingsSchema = z.object({
+  taxasAdquirente: z.array(taxaAdquirenteSchema).max(120).optional(),
   monthlyGoal: z.number().nonnegative().optional(),
   commissionRules: z.array(z.object({ operator: z.string(), percent: z.number().min(0).max(100) })).optional(),
   feeRules: z.array(feeRuleSchema).max(60).optional(),
@@ -68,7 +83,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tenant/settings', { preHandler: [requireAuth] }, async (req) => {
     const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
     const meta = (tenant?.meta ?? {}) as Record<string, unknown>;
-    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules, feeRules: meta.feeRules ?? [] } };
+    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules, feeRules: meta.feeRules ?? [], taxasAdquirente: meta.taxasAdquirente ?? [] } };
   });
 
   app.patch('/api/tenant/settings', { preHandler: [requireAuth, requireCapability('tenant.update'), audit({ action: 'tenant.settings.update', captureBody: true })] }, async (req) => {
@@ -80,7 +95,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
       data: { meta: meta as Prisma.InputJsonValue },
     });
     const updatedMeta = updated.meta as Record<string, unknown>;
-    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [] } };
+    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [], taxasAdquirente: updatedMeta.taxasAdquirente ?? [] } };
   });
 
   // ─── Integracoes de terceiro (27/08) ───────────────────────────────────────────────
