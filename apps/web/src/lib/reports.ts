@@ -288,7 +288,9 @@ export interface ItemConciliado {
 export interface ConciliacaoDia { data: string; extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number; diferenca: number; completo: boolean }
 export interface ExtratoResponse {
   periodo: { from: string; to: string };
-  fronteiraSync: string | null; // ultimo dia sincronizado: dele em diante nada e julgado
+  fronteiraSync: string | null;
+  custo: ResumoCusto;          // custo EXATO por bandeira (o extrato traz a bandeira)
+  regrasCadastradas: number; // ultimo dia sincronizado: dele em diante nada e julgado
   extrato: { linhas: number; autorizadas: number; paginas: number };
   porDia: ConciliacaoDia[];
   totais: {
@@ -312,4 +314,26 @@ export interface CobrancasSemVendaResponse {
   transacoesNoPeriodo: number;
   linhas: CobrancaSemVenda[];
   meta: FreshnessMeta;
+}
+
+// ---------- Taxas por adquirente + bandeira + modalidade (27/08) ----------
+export type Modalidade = 'debito' | 'credito' | 'pix';
+export interface TaxaAdquirente {
+  acquirer: string;
+  bandeira: string | null; // null = qualquer bandeira do mesmo adquirente/modalidade
+  modalidade: Modalidade;
+  percent: number;
+  fixedValue?: number;
+  daysToReceive?: number;
+  parcelasDe?: number | null;
+  parcelasAte?: number | null;
+}
+export interface CustoPorBandeira {
+  acquirer: string; bandeira: string; modalidade: Modalidade;
+  transacoes: number; bruto: number; percent: number | null; taxa: number; liquido: number;
+}
+export interface ResumoCusto {
+  bruto: number; taxa: number; liquido: number; taxaEfetivaPct: number | null;
+  semRegra: { bruto: number; transacoes: number };
+  porBandeira: CustoPorBandeira[];
 }

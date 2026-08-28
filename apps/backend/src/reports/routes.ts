@@ -10,6 +10,7 @@ import { buildCashflow, buildForecast, pickGranularity, type Granularity } from 
 import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
 import { coletar, CredencialInvalida } from '../conciliacao/getcard.js';
 import { conciliar } from '../conciliacao/matcher.js';
+import { calcularCusto, type RegraTaxa } from '../conciliacao/taxas.js';
 import { open, isSealed } from '../lib/secretBox.js';
 
 // P4 (26/08, confirmado no Firebird do piloto): a venda de REGISTRO e o PV (pre-venda) e a
@@ -1657,10 +1658,19 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       tef, outrasFormas, fronteira,
     );
 
+    // Custo EXATO por bandeira: o extrato traz a bandeira, entao aqui nao ha estimativa.
+    const regras = ((((tenant?.meta ?? {}) as Record<string, unknown>).taxasAdquirente ?? []) as RegraTaxa[]);
+    const custo = calcularCusto(
+      linhas.map((l) => ({ acquirer: l.adquirente, bandeira: l.bandeira, valor: l.valor, parcelas: l.parcelas })),
+      regras,
+    );
+
     const meta = await getFreshnessMeta(tenantId, storeId);
     return {
       periodo: { from: iso(from), to: iso(to) },
       fronteiraSync: fronteira ?? null,
+      custo,
+      regrasCadastradas: regras.length,
       extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas },
       ...resultado,
       // so os problemas — a lista inteira pode ter milhares de linhas
