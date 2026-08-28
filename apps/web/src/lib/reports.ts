@@ -249,7 +249,7 @@ export interface InadimplenciaResponse {
 }
 
 // ---------- GET /api/reports/conciliacao/previsto (26/08) ----------
-export type FeeChannel = 'pos_debito' | 'pos_credito' | 'pix_tef' | 'pix_estatico';
+export type FeeChannel = 'tef_debito' | 'tef_credito' | 'pos_debito' | 'pos_credito' | 'pix_tef' | 'pix_estatico';
 export interface FeeRule {
   channel: FeeChannel;
   acquirer?: string | null;

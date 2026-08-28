@@ -74,25 +74,36 @@ export function emptyBreakdown(): PaymentBreakdown {
   return { dinheiro: 0, cartao: 0, pix: 0, crediario: 0, outros: 0 };
 }
 
-// ─── Canal de taxa (conciliacao bancaria, D21 — 26/08) ──────────────────────────────
-// Granularidade MAIOR que PaymentKey: pra taxa, `cartao` nao basta (debito e credito tem
-// taxas diferentes) e `pix` nao basta (PIX pelo TEF/Shipay cobra taxa, PIX estatico costuma
-// ser outra). Os literais reais do cliente (Piloto, agosto/2026):
-//   'CARTãO DéBITO' · 'CARTãO CRéDITO' · 'PAGAMENTO INSTANTâNEO (PIX)' (TEF/Shipay)
-//   'PAGAMENTO INSTANTâNEO ESTATICO (PIX)' (QR fixo da loja)
-// Retorna null pro que NAO tem taxa de adquirente (dinheiro, crediario da propria loja).
-export type FeeChannel = 'pos_debito' | 'pos_credito' | 'pix_tef' | 'pix_estatico';
+// ─── Canal de taxa (conciliacao bancaria, D21 — 26/08; revisto 27/08) ──────────────
+// Granularidade MAIOR que PaymentKey. Duas separacoes que o dono precisa e que a 1a versao
+// perdia (achado 27/08 olhando as formas reais das duas lojas):
+//   1. debito x credito — taxas diferentes;
+//   2. **TEF x maquininha avulsa** — sao ADQUIRENTES diferentes, com contrato e taxa
+//      diferentes. Na J.Kastros: `TEF CREDITO` R$144.948 e `CREDITO ENTREGA` R$103.594 no
+//      mesmo mes; a 1a versao somava os dois em "POS" e nao havia onde cadastrar a taxa do TEF.
+// PIX segue a mesma logica: `PIX TEF` (pela maquininha) x `PIX ENTREGA`/estatico (QR fixo).
+//
+// Le a ESPECIE (forma bruta do GDOOR), nao o paymentType: o paymentType ja vem traduzido pro
+// nome fiscal, onde `TEF CREDITO` e `CREDITO ENTREGA` viram os dois `CARTAO CREDITO`.
+export type FeeChannel =
+  | 'tef_debito' | 'tef_credito'      // maquininha integrada ao PDV (TEF)
+  | 'pos_debito' | 'pos_credito'      // maquininha avulsa (na J.Kastros, a da entrega)
+  | 'pix_tef' | 'pix_estatico';
 
-export const FEE_CHANNELS: readonly FeeChannel[] = ['pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico'];
+export const FEE_CHANNELS: readonly FeeChannel[] = [
+  'tef_debito', 'tef_credito', 'pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico',
+];
 
-export function feeChannel(raw: string | null | undefined): FeeChannel | null {
-  const t = normalizeText(raw);
+/** `especie` = forma bruta do GDOOR (preferida). `paymentType` = fiscal, so como reserva. */
+export function feeChannel(especie: string | null | undefined, paymentType?: string | null): FeeChannel | null {
+  const t = normalizeText(especie) || normalizeText(paymentType);
   if (!t) return null;
+  const ehTef = t.includes('TEF');
   // PIX primeiro: 'ESTATICO' so aparece no literal do QR fixo.
-  if (t.includes('PIX')) return t.includes('ESTATICO') ? 'pix_estatico' : 'pix_tef';
-  // crediario da loja NAO e adquirente — checado antes de cartao (mesma ordem do normalize)
+  if (t.includes('PIX')) return ehTef ? 'pix_tef' : 'pix_estatico';
+  // crediario da loja NAO e adquirente — antes de cartao (mesma ordem do normalize)
   if (t.includes('PRAZO') || t.includes('CREDIARIO') || t.includes('CREDITO LOJA') || t.includes('CARTAO DA LOJA')) return null;
-  if (t.includes('DEBITO')) return 'pos_debito';
-  if (t.includes('CREDITO')) return 'pos_credito';
+  if (t.includes('DEBITO')) return ehTef ? 'tef_debito' : 'pos_debito';
+  if (t.includes('CREDITO')) return ehTef ? 'tef_credito' : 'pos_credito';
   return null; // dinheiro, outros
 }

@@ -32,7 +32,7 @@ const updateStoreSchema = z.object({
 // justificam tabela propria. `installments: null` = vale para qualquer parcelamento;
 // `acquirer: null` = vale para qualquer adquirente (Cielo/Rede). Ver openspec D21.
 const feeRuleSchema = z.object({
-  channel: z.enum(['pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico']),
+  channel: z.enum(['tef_debito', 'tef_credito', 'pos_debito', 'pos_credito', 'pix_tef', 'pix_estatico']),
   acquirer: z.string().max(40).nullable().optional(),
   installments: z.number().int().min(1).max(24).nullable().optional(),
   percent: z.number().min(0).max(100),
