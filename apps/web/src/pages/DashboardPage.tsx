@@ -142,12 +142,14 @@ export function DashboardPage(): JSX.Element {
           />
           <KpiCard
             label="Caixa físico (contado)" info="O que o operador CONTOU ao fechar o caixa, somado no período. ‘Quebra’ é a diferença para o que o sistema esperava: negativa = faltou, positiva = sobrou. A quebra nunca altera o faturamento."
-            value={formatCompactBRL(t.caixaFisico.contado)}
-            tone={t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
+            value={t.caixaFisico.indisponivel ? '—' : formatCompactBRL(t.caixaFisico.contado)}
+            tone={t.caixaFisico.indisponivel || t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
             compact
             // sub curto: no celular o card tem ~20 caracteres de largura
             sub={
-              t.caixaFisico.fechamentos === 0
+              t.caixaFisico.indisponivel
+                ? 'indisponível agora — tente de novo'
+                : t.caixaFisico.fechamentos === 0
                 ? 'sem fechamento no período'
                 : `quebra ${t.caixaFisico.quebra < 0 ? '−' : '+'}${formatCompactBRL(Math.abs(t.caixaFisico.quebra))} · ${t.caixaFisico.comQuebra}/${t.caixaFisico.fechamentos} caixas`
             }

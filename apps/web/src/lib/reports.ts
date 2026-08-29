@@ -176,7 +176,7 @@ export interface DashTodayResponse {
   canceladas: { total: number; count: number };
   diasTrabalhados: number;
   mediaDiaria: number;
-  caixaFisico: { esperado: number; contado: number; quebra: number; fechamentos: number; comQuebra: number };
+  caixaFisico: { esperado: number; contado: number; quebra: number; fechamentos: number; comQuebra: number; indisponivel?: boolean };
   quality: CashflowQuality;
   meta: FreshnessMeta;
 }
