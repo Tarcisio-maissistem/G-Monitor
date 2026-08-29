@@ -47,6 +47,23 @@ async function bulkUpsert(
   const updateColumns = columns.filter((c) => !conflictColumns.includes(c));
   const allColumns = ['id', ...columns];
 
+  // PRE-VALIDACAO (incidente 28/08): confere os numeros ANTES de ir ao banco. Decimal(14,2)
+  // estoura a partir de 10^12, e NaN/Infinity tambem derrubam o INSERT. Achar a linha ruim aqui
+  // custa zero; achar no banco custava o lote inteiro (1000 linhas) + a tentativa linha a linha
+  // (1000 round-trips, ~3min — mais que os 60s do nginx, entao o agente reenviava e empilhava).
+  const validas: Record<string, unknown>[] = [];
+  for (const r of rows) {
+    const ruim = campoNumericoInvalido(r);
+    if (ruim) {
+      logger.error({ table, sourceId: r['sourceId'], tenantId: r['tenantId'], storeId: r['storeId'], campo: ruim.campo, valor: String(ruim.valor), linha: resumoNumerico(r) },
+        'LINHA PULADA no sync — valor numerico invalido vindo do GDOOR');
+      continue;
+    }
+    validas.push(r);
+  }
+  rows = validas;
+  if (rows.length === 0) return 0;
+
   const valueRows = rows.map((r) => Prisma.sql`(${Prisma.join(allColumns.map((c) => (c === 'id' ? randomUUID() : (r[c] ?? null))))})`);
 
   const tableIdent = Prisma.raw(`"${table}"`);
@@ -71,6 +88,7 @@ async function bulkUpsert(
     logger.warn({ table, rows: rows.length, err: String((err as Error).message).slice(0, 160) }, 'bulk upsert falhou — tentando linha a linha');
     let ok = 0;
     for (const r of rows) {
+      // depois da pre-validacao isto so roda pra erro que o JS nao previu (ex.: data invalida)
       const vals = allColumns.map((c) => (c === 'id' ? randomUUID() : (r[c] ?? null)));
       try {
         await prismaSync.$executeRaw`
@@ -97,6 +115,16 @@ async function bulkUpsert(
 function isRowLevelError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? '');
   return /Code: `(22003|22P02|22007|22008|23502)`/.test(msg) || /numeric field overflow|invalid input syntax/.test(msg);
+}
+
+// Limite do Decimal(14,2): |v| < 10^12. NaN/Infinity nunca sao validos.
+const LIMITE_DECIMAL_14_2 = 1e12;
+function campoNumericoInvalido(r: Record<string, unknown>): { campo: string; valor: unknown } | null {
+  for (const [k, v] of Object.entries(r)) {
+    if (typeof v !== 'number') continue;
+    if (!Number.isFinite(v) || Math.abs(v) >= LIMITE_DECIMAL_14_2) return { campo: k, valor: v };
+  }
+  return null;
 }
 
 // So os campos numericos da linha, pra o log dizer QUAL valor veio absurdo.
