@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
+import { logger } from '../logger.js';
 import { prisma, prismaSync } from '../db/prisma.js';
 import { hashToken } from '../auth/tokens.js';
 
@@ -53,11 +54,56 @@ async function bulkUpsert(
   const conflictIdent = Prisma.raw(conflictColumns.map((c) => `"${c}"`).join(', '));
   const updateSet = Prisma.raw(updateColumns.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', '));
 
-  await prismaSync.$executeRaw`
-    INSERT INTO ${tableIdent} (${colIdent}) VALUES ${Prisma.join(valueRows)}
-    ON CONFLICT (${conflictIdent}) DO UPDATE SET ${updateSet}
-  `;
-  return rows.length;
+  try {
+    await prismaSync.$executeRaw`
+      INSERT INTO ${tableIdent} (${colIdent}) VALUES ${Prisma.join(valueRows)}
+      ON CONFLICT (${conflictIdent}) DO UPDATE SET ${updateSet}
+    `;
+    return rows.length;
+  } catch (err) {
+    // INCIDENTE 28/08: UMA linha com valor absurdo (>= 10^12, estoura Decimal(14,2)) derrubava o
+    // INSERT das 1000 e o agente reenviava o MESMO lote a cada 90s, pra sempre — checkpoint
+    // parado, sync "travado", e o pool sufocado pelas tentativas. Uma linha ruim nao pode
+    // travar a loja inteira: cai pra insercao linha a linha, PULA so a que falha e registra
+    // (tabela + sourceId + valores) pra ser tratada. Dinheiro nunca e "arredondado" em
+    // silencio — a linha fica de fora e aparece no log.
+    if (!isRowLevelError(err)) throw err;
+    logger.warn({ table, rows: rows.length, err: String((err as Error).message).slice(0, 160) }, 'bulk upsert falhou — tentando linha a linha');
+    let ok = 0;
+    for (const r of rows) {
+      const vals = allColumns.map((c) => (c === 'id' ? randomUUID() : (r[c] ?? null)));
+      try {
+        await prismaSync.$executeRaw`
+          INSERT INTO ${tableIdent} (${colIdent}) VALUES (${Prisma.join(vals)})
+          ON CONFLICT (${conflictIdent}) DO UPDATE SET ${updateSet}
+        `;
+        ok++;
+      } catch (rowErr) {
+        if (!isRowLevelError(rowErr)) throw rowErr;
+        logger.error({
+          table, sourceId: r['sourceId'], linha: resumoNumerico(r),
+          err: String((rowErr as Error).message).slice(0, 200),
+        }, 'LINHA PULADA no sync — valor invalido vindo do GDOOR');
+      }
+    }
+    return ok;
+  }
+}
+
+// Erros que sao da LINHA (dado invalido), nao do banco/infra: so nesses vale pular e seguir.
+// 22003 = numeric overflow, 22P02 = texto invalido, 22007/22008 = data invalida, 23502 = null
+// em NOT NULL. Timeout, pool, conexao caida (P1001, 57014...) continuam estourando o lote —
+// pular linha nesses casos esconderia um problema de infra como se fosse dado ruim.
+function isRowLevelError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? '');
+  return /Code: `(22003|22P02|22007|22008|23502)`/.test(msg) || /numeric field overflow|invalid input syntax/.test(msg);
+}
+
+// So os campos numericos da linha, pra o log dizer QUAL valor veio absurdo.
+function resumoNumerico(r: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(r)) if (typeof v === 'number') out[k] = v;
+  return out;
 }
 
 async function authenticateAgent(
