@@ -8,7 +8,23 @@ export interface FreshnessMeta {
   stalenessSeconds: number | null;
   agentsOffline: string[];
   agentVersion?: string | null; // menor versao entre os agentes da loja (26/08)
+  tabelasSincronizadas?: string[]; // sync_state: tabelas que JA chegaram nesta loja (28/08)
 }
+
+// Regra do dono (28/08): zero nunca pode parecer fato quando o dado nao chegou. Cada card diz
+// de qual tabela depende; se ela ainda nao sincronizou, mostra "—" e "ainda nao sincronizado".
+export type TabelaSync = 'sales' | 'saleItems' | 'payments' | 'payables' | 'receivables' | 'cashClosings' | 'cardTransactions';
+export const TABELA_LABEL: Record<TabelaSync, string> = {
+  sales: 'vendas', saleItems: 'itens de venda', payments: 'pagamentos', payables: 'contas a pagar',
+  receivables: 'contas a receber', cashClosings: 'fechamentos de caixa', cardTransactions: 'transações de cartão',
+};
+/** true = a tabela ainda NAO sincronizou nesta loja (so decide quando o meta chegou). */
+export function semDado(meta: Partial<FreshnessMeta> | null | undefined, tabela: TabelaSync): boolean {
+  if (!meta || !meta.tabelasSincronizadas) return false;
+  return !meta.tabelasSincronizadas.includes(tabela);
+}
+export const SEM_DADO = '—';
+export const SEM_DADO_SUB = 'ainda não sincronizado';
 
 // Selo de honestidade por linha/KPI (P3: liberar com selo visivel, nunca zero escondendo dado).
 export type DataStatus = 'real' | 'estimate' | 'nd';

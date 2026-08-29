@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { formatBRL, formatBrDate, formatCompactBRL, formatInt } from '../lib/masks';
 import { currentMonthRange, monthLabel, type DateRange } from '../lib/period';
 import type { DashTodayResponse } from '../lib/reports';
+import { semDado, SEM_DADO, SEM_DADO_SUB } from '../lib/reports';
 import { buildWhatsAppResumo } from '../lib/whatsapp';
 import {
   PageContainer, PageHeader, KpiRow, KpiCard, QueryState, CopyWhatsAppButton, DateRangeFilter,
@@ -34,6 +35,20 @@ interface SalesByPayment {
   };
 }
 
+// Secao inteira que depende de uma tabela ainda nao sincronizada: caixa neutra com "—",
+// em vez de grafico vazio/zerado que parece "a loja nao vendeu" (dono 28/08).
+function SemDadoBox({ titulo, tabela }: { titulo: string; tabela: string }): JSX.Element {
+  return (
+    <section className="bg-white rounded-xl shadow-sm border p-5">
+      <h3 className="font-semibold text-slate-700">{titulo}</h3>
+      <div className="h-32 flex flex-col items-center justify-center text-slate-400">
+        <span className="text-3xl font-bold">—</span>
+        <span className="text-xs mt-1">ainda não sincronizado ({tabela})</span>
+      </div>
+    </section>
+  );
+}
+
 const KLASS_COLOR: Record<string, string> = { A: 'text-green-700 bg-green-50', B: 'text-blue-700 bg-blue-50', C: 'text-slate-600 bg-slate-50' };
 
 // Dashboard reorganizado 26/08 (pedido do dono: estava "bagunçado"). Topo = totais do
@@ -58,6 +73,12 @@ export function DashboardPage(): JSX.Element {
 
   const t = today.data;
   const s = summary.data?.data;
+  // "—" quando a tabela de origem ainda nao sincronizou nesta loja (regra do dono 28/08:
+  // zero nunca pode parecer fato quando o dado nao chegou).
+  const meta = today.data?.meta;
+  const falta = (tabela: Parameters<typeof semDado>[1]): boolean => semDado(meta, tabela);
+  const v = (tabela: Parameters<typeof semDado>[1], valor: string): string => (falta(tabela) ? SEM_DADO : valor);
+  const sub = (tabela: Parameters<typeof semDado>[1], texto: string): string => (falta(tabela) ? SEM_DADO_SUB : texto);
 
   const whatsapp = buildWhatsAppResumo({
     titulo: `Resumo de ${mesLabel}`,
@@ -110,18 +131,19 @@ export function DashboardPage(): JSX.Element {
           <KpiCard
             label="Vendido"
             info="Tudo que a loja vendeu no período: pré-vendas e notas fiscais (NF-e). A NFC-e gerada a partir de uma pré-venda não conta de novo. Não é o que entrou no caixa — veja ‘Recebido em caixa’."
-            value={formatCompactBRL(t?.vendido.total ?? 0)}
+            value={v('sales', formatCompactBRL(t?.vendido.total ?? 0))}
             tone="blue"
             highlight
             sub={
-              t && t.vendido.count === 0 && t.dadosAte && t.dadosAte < t.periodo.from
+              falta('sales') ? SEM_DADO_SUB
+                : t && t.vendido.count === 0 && t.dadosAte && t.dadosAte < t.periodo.from
                 ? `sincronizando — dados até ${formatBrDate(t.dadosAte)}`
                 : `${formatInt(t?.vendido.count ?? 0)} vendas · ${formatBRL(t?.vendido.total ?? 0)}`
             }
           />
-          <KpiCard label="Recebido em caixa" info="Dinheiro que de fato entrou no caixa no período (dinheiro, PIX, cartão e recebimentos). Venda a prazo/fiado só entra aqui quando o cliente paga." value={formatCompactBRL(t?.recebidoCaixa.total ?? 0)} tone="emerald" sub={formatBRL(t?.recebidoCaixa.total ?? 0)} />
-          <KpiCard label="Contas recebidas" info="Contas a receber que foram baixadas (pagas pelo cliente) dentro do período, somando o valor recebido." value={formatCompactBRL(t?.contasRecebidas.total ?? 0)} tone="emerald" sub={`${formatInt(t?.contasRecebidas.count ?? 0)} baixas`} />
-          <KpiCard label="Contas pagas" info="Contas a pagar que foram baixadas (pagas a fornecedores e despesas) dentro do período." value={formatCompactBRL(t?.contasPagas.total ?? 0)} tone="red" sub={`${formatInt(t?.contasPagas.count ?? 0)} baixas`} />
+          <KpiCard label="Recebido em caixa" info="Dinheiro que de fato entrou no caixa no período (dinheiro, PIX, cartão e recebimentos). Venda a prazo/fiado só entra aqui quando o cliente paga." value={v('payments', formatCompactBRL(t?.recebidoCaixa.total ?? 0))} tone="emerald" sub={sub('payments', formatBRL(t?.recebidoCaixa.total ?? 0))} />
+          <KpiCard label="Contas recebidas" info="Contas a receber que foram baixadas (pagas pelo cliente) dentro do período, somando o valor recebido." value={v('receivables', formatCompactBRL(t?.contasRecebidas.total ?? 0))} tone="emerald" sub={sub('receivables', `${formatInt(t?.contasRecebidas.count ?? 0)} baixas`)} />
+          <KpiCard label="Contas pagas" info="Contas a pagar que foram baixadas (pagas a fornecedores e despesas) dentro do período." value={v('payables', formatCompactBRL(t?.contasPagas.total ?? 0))} tone="red" sub={sub('payables', `${formatInt(t?.contasPagas.count ?? 0)} baixas`)} />
         </KpiRow>
       </QueryState>
 
@@ -131,23 +153,25 @@ export function DashboardPage(): JSX.Element {
         <KpiRow cols={2}>
           <KpiCard
             label="Hoje × ontem" info="Vendido hoje comparado com o dia de ontem. A porcentagem já vem calculada: ▲ vendeu mais, ▼ vendeu menos. Não depende do filtro de datas."
-            value={formatCompactBRL(t.hojeOntem.hoje.total)}
-            tone={t.hojeOntem.variacaoPct == null ? 'default' : t.hojeOntem.variacaoPct >= 0 ? 'emerald' : 'red'}
+            value={v('sales', formatCompactBRL(t.hojeOntem.hoje.total))}
+            tone={falta('sales') || t.hojeOntem.variacaoPct == null ? 'default' : t.hojeOntem.variacaoPct >= 0 ? 'emerald' : 'red'}
             compact
             sub={
-              t.hojeOntem.variacaoPct == null
+              falta('sales') ? SEM_DADO_SUB
+                : t.hojeOntem.variacaoPct == null
                 ? `${formatInt(t.hojeOntem.hoje.count)} vendas hoje · ontem sem venda`
                 : `${t.hojeOntem.variacaoPct >= 0 ? '▲' : '▼'} ${Math.abs(t.hojeOntem.variacaoPct).toFixed(1)}% vs ontem (${formatBRL(t.hojeOntem.ontem.total)})`
             }
           />
           <KpiCard
             label="Caixa físico (contado)" info="O que o operador CONTOU ao fechar o caixa, somado no período. ‘Quebra’ é a diferença para o que o sistema esperava: negativa = faltou, positiva = sobrou. A quebra nunca altera o faturamento."
-            value={t.caixaFisico.indisponivel ? '—' : formatCompactBRL(t.caixaFisico.contado)}
+            value={falta('cashClosings') || t.caixaFisico.indisponivel ? SEM_DADO : formatCompactBRL(t.caixaFisico.contado)}
             tone={t.caixaFisico.indisponivel || t.caixaFisico.fechamentos === 0 ? 'default' : Math.abs(t.caixaFisico.quebra) < 0.005 ? 'emerald' : t.caixaFisico.quebra < 0 ? 'red' : 'amber'}
             compact
             // sub curto: no celular o card tem ~20 caracteres de largura
             sub={
-              t.caixaFisico.indisponivel
+              falta('cashClosings') ? SEM_DADO_SUB
+                : t.caixaFisico.indisponivel
                 ? 'indisponível agora — tente de novo'
                 : t.caixaFisico.fechamentos === 0
                 ? 'sem fechamento no período'
@@ -162,7 +186,7 @@ export function DashboardPage(): JSX.Element {
       {s && s.quantity > 0 && t && (
         <KpiRow cols={5}>
           <KpiCard label="Ticket médio" info="Valor médio por venda no período (vendido ÷ quantidade de vendas)." value={formatBRL(s.ticket)} compact />
-          <KpiCard label="Canceladas" info="Vendas canceladas no período (quantidade e valor). Não entram no faturamento." value={formatInt(t.canceladas.count)} tone={t.canceladas.count > 0 ? 'red' : 'default'} compact sub={t.canceladas.count > 0 ? formatBRL(t.canceladas.total) : 'nenhuma'} />
+          <KpiCard label="Canceladas" info="Vendas canceladas no período (quantidade e valor). Não entram no faturamento." value={v('sales', formatInt(t.canceladas.count))} tone={!falta('sales') && t.canceladas.count > 0 ? 'red' : 'default'} compact sub={sub('sales', t.canceladas.count > 0 ? formatBRL(t.canceladas.total) : 'nenhuma')} />
           <KpiCard label="Dias trabalhados" info="Dias do período em que houve pelo menos uma venda. Feriado ou dia fechado não conta." value={formatInt(t.diasTrabalhados)} compact />
           <KpiCard label="Média diária" info="Vendido no período dividido pelos dias trabalhados — mostra o ritmo real da loja sem o feriado derrubar a média." value={formatCompactBRL(t.mediaDiaria)} compact sub={formatBRL(t.mediaDiaria)} />
           <KpiCard label="Clientes únicos" info="Quantos clientes diferentes (identificados na venda) compraram no período. Venda sem cliente informado não conta." value={formatInt(s.uniqueCustomers)} compact />
@@ -170,10 +194,10 @@ export function DashboardPage(): JSX.Element {
       )}
 
       {/* Financeiro com previsibilidade (Parte 3 do doc do dono) */}
-      <FinancialPosition from={from} to={to} />
+      {falta('receivables') || falta('payables') ? <SemDadoBox titulo="Posição financeira" tabela="contas a receber/pagar" /> : <FinancialPosition from={from} to={to} />}
 
       {/* Inadimplência por tempo + quem deve há mais tempo (pedido do dono 26/08) */}
-      <Inadimplencia />
+      {falta('receivables') ? <SemDadoBox titulo="Inadimplência por tempo" tabela="contas a receber" /> : <Inadimplencia />}
 
       <RevenueYoYChart />
 
@@ -181,11 +205,12 @@ export function DashboardPage(): JSX.Element {
         <PeakHoursChart />
         <WeekdayChart from={from} to={to} />
       </div>
-      <SellerRanking from={from} to={to} />
+      {falta('sales') ? <SemDadoBox titulo="Ranking de vendedores" tabela="vendas" /> : <SellerRanking from={from} to={to} />}
 
       {/* Entradas × Saídas do período (pedido do dono 26/08) */}
-      <EntradasSaidasChart from={from} to={to} />
+      {falta('payments') ? <SemDadoBox titulo="Entradas × Saídas do período" tabela="pagamentos" /> : <EntradasSaidasChart from={from} to={to} />}
 
+      {falta('payments') ? <SemDadoBox titulo="Formas de Pagamento" tabela="pagamentos" /> : (<>
       {/* Formas de pagamento: lista colorida por forma + pizza (agregado por forma canônica,
           cada barra com sua cor — pedido do dono 26/08). */}
       <section className="bg-white rounded-xl shadow-sm border p-5">
@@ -217,7 +242,9 @@ export function DashboardPage(): JSX.Element {
           )}
         </QueryState>
       </section>
+      </>)}
 
+      {falta('saleItems') ? <SemDadoBox titulo="Curva ABC — Top 20 Produtos" tabela="itens de venda" /> : (<>
       {/* Curva ABC */}
       <section className="bg-white rounded-xl shadow-sm border p-5">
         <h3 className="font-semibold text-slate-700 mb-4">Curva ABC — Top 20 Produtos</h3>
@@ -250,6 +277,7 @@ export function DashboardPage(): JSX.Element {
           </div>
         </QueryState>
       </section>
+      </>)}
     </PageContainer>
   );
 }

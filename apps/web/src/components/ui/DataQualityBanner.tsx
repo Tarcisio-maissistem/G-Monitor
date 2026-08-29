@@ -1,4 +1,5 @@
 import type { CashflowQuality, DreLine, FreshnessMeta } from '../../lib/reports';
+import { TABELA_LABEL } from '../../lib/reports';
 
 export type QualityKind = 'info' | 'warn' | 'error';
 
@@ -27,6 +28,12 @@ export function metaToItems(meta: Partial<FreshnessMeta> | null | undefined): Qu
   const s = meta.stalenessSeconds;
   if (s != null && s > STALENESS_LIMIT_SECONDS) {
     out.push({ kind: 'warn', label: `Dados sincronizados há ${Math.round(s / 60)} min — pode haver defasagem.` });
+  }
+  // Tabelas que ainda nao chegaram: o usuario entende por que ha "—" na tela (dono 28/08).
+  if (meta.tabelasSincronizadas) {
+    const faltam = (['sales', 'saleItems', 'payments', 'payables', 'receivables', 'cashClosings'] as const)
+      .filter((t) => !meta.tabelasSincronizadas!.includes(t)).map((t) => TABELA_LABEL[t]);
+    if (faltam.length > 0) out.push({ kind: 'info', label: `Ainda não sincronizado nesta loja: ${faltam.join(', ')}. Onde aparece "—", o dado ainda não chegou.` });
   }
   return out;
 }
