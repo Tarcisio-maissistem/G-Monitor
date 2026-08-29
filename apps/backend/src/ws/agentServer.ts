@@ -98,7 +98,10 @@ export async function registerAgentWs(app: FastifyInstance): Promise<void> {
       pack({
         type: 'event',
         name: 'handshake_ack',
-        payload: { agentSessionId: session.id, protocolVersion: PROTOCOL_VERSION },
+        payload: {
+          // intervalo de sync ditado pelo servidor (dono 28/08: 1h; plano free, custo minimo).
+          // Agente >= 0.9.7 aplica; antigo ignora e continua no seu 90s (o servidor freia por 503).
+          syncIntervalMs: Number(process.env.AGENT_SYNC_INTERVAL_MS ?? 60 * 60 * 1000), agentSessionId: session.id, protocolVersion: PROTOCOL_VERSION },
         ts: new Date().toISOString(),
       }),
     );

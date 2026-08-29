@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
 import type { FreshnessMeta, AgentManifest } from '../../lib/reports';
 import { Spinner } from '../Spinner';
 
@@ -27,11 +29,31 @@ export function AgentStatus({ meta }: { meta?: FreshnessMeta | null | undefined 
     : '—';
   const relativo = staleSec == null ? '' : staleSec < 90 ? 'agora há pouco' : staleSec < 3600 ? `há ${Math.round(staleSec / 60)} min` : `há ${Math.round(staleSec / 3600)} h`;
 
-  const atualizar = (): void => {
-    void qc.invalidateQueries(); // re-le tudo do SaaS (o agente alimenta a cada ~90s)
+  // "Sincronizar": pede ao servidor pra liberar a trava e ACORDAR o agente da loja (dono 28/08:
+  // sync de hora em hora pra custar o minimo; quem quer dado fresco clica). Os PCs desligam a
+  // noite — se o agente estiver offline o painel diz isso, e o sync acontece quando ele ligar.
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [pedindo, setPedindo] = useState(false);
+  const atualizar = async (): Promise<void> => {
+    setPedindo(true); setAviso(null);
+    try {
+      const r = await api<{ agentes: Array<{ loja: string; online: boolean; acordado: boolean }>; algumOnline: boolean }>('/api/agents/sync-now', { method: 'POST' });
+      if (!r.algumOnline) {
+        setAviso('O computador da loja está desligado — o agente sincroniza sozinho assim que ligar.');
+      } else if (r.agentes.some((a) => a.online && !a.acordado)) {
+        setAviso('Agente ligado (versão antiga): sincroniza em até 2 minutos.');
+      } else {
+        setAviso('Sincronização iniciada — os números atualizam em instantes.');
+      }
+      // da tempo do agente enviar e o servidor gravar; depois re-le tudo
+      setTimeout(() => { void qc.invalidateQueries(); }, 25_000);
+    } catch (e) {
+      setAviso((e as Error).message);
+    } finally { setPedindo(false); }
   };
 
   return (
+    <>
     <div className="bg-white border rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm">
       <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${dot}`} />
       <div className="flex-1 min-w-0">
@@ -48,12 +70,14 @@ export function AgentStatus({ meta }: { meta?: FreshnessMeta | null | undefined 
         )}
       </div>
       <button
-        onClick={atualizar}
-        disabled={fetching}
+        onClick={() => void atualizar()}
+        disabled={pedindo || fetching}
         className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-70"
       >
-        {fetching ? <><Spinner className="h-3.5 w-3.5" /> Sincronizando…</> : <>↻ Atualizar</>}
+        {pedindo || fetching ? <><Spinner className="h-3.5 w-3.5" /> Sincronizando…</> : <>↻ Sincronizar</>}
       </button>
     </div>
+    {aviso && <div className="text-xs text-slate-600 px-1 -mt-1">{aviso}</div>}
+    </>
   );
 }

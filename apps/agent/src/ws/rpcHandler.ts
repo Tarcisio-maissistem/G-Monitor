@@ -3,6 +3,7 @@ import { resolveReport } from '../catalog/index.js';
 import { RPC_ERROR_CODES } from '@gmonitor/rpc-contracts';
 import { getFirebirdPool } from '../firebird/manager.js';
 import { logger } from '../logger.js';
+import { runSyncTick } from '../sync/syncer.js';
 
 interface RpcContext {
   uptimeSeconds: number;
@@ -18,6 +19,12 @@ class RpcError extends Error {
 
 export async function handleRpc(op: string, params: unknown, ctx: RpcContext): Promise<unknown> {
   switch (op) {
+    // "Sincronizar agora" do painel (dono 28/08): dispara um ciclo completo sem esperar a hora.
+    case 'syncNow': {
+      const iniciado = await runSyncTick();
+      return { iniciado };
+    }
+
     case 'ping':
       return { nonce: (params as { nonce?: string })?.nonce ?? '', uptimeSeconds: ctx.uptimeSeconds };
 

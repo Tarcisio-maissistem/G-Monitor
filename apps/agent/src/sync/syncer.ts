@@ -320,18 +320,45 @@ async function syncCashClosingSpecies(cfg: AgentConfig): Promise<number> {
   return persisted;
 }
 
+// Estado do loop no modulo: o RPC 'syncNow' (botao "Sincronizar" do painel) e o handshake
+// (intervalo ditado pelo servidor) precisam alcancar o tick e o timer sem ter o cfg na mao.
+let cfgAtual: AgentConfig | null = null;
+let timerAtual: NodeJS.Timeout | null = null;
+let intervaloAtualMs = 0;
+let running = false;
+
+/** Roda UM ciclo completo agora (todas as tabelas). Ignora se ja houver um em andamento. */
+export async function runSyncTick(): Promise<boolean> {
+  if (!cfgAtual) return false;
+  if (running) { logger.warn('sync tick anterior ainda rodando, pulando este ciclo'); return false; }
+  await tick(cfgAtual);
+  return true;
+}
+
+/** Aplica um intervalo novo (ex.: o que o servidor manda no handshake) sem reiniciar o agente. */
+export function setSyncInterval(ms: number): void {
+  if (!cfgAtual || !Number.isFinite(ms) || ms < 30_000 || ms === intervaloAtualMs) return;
+  if (timerAtual) clearInterval(timerAtual);
+  intervaloAtualMs = ms;
+  timerAtual = setInterval(() => void runSyncTick(), ms);
+  logger.info({ syncIntervalMs: ms }, 'intervalo de sync ajustado pelo servidor');
+}
+
 export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
-  // Trava contra sobreposicao: setInterval dispara um novo tick mesmo se o anterior ainda
-  // estiver rodando. Se um tick demorar mais que syncIntervalMs (rede lenta, tabela grande),
-  // ticks empilhados multiplicam a carga no backend em vez de so atrasar — foi exatamente
-  // isso que derrubou o dashboard do Tarcisio em 24/08. Um tick em andamento faz o proximo
-  // simplesmente pular, nunca rodar em paralelo com o de antes.
-  let running = false;
-  return setInterval(async () => {
-    if (running) {
-      logger.warn('sync tick anterior ainda rodando, pulando este ciclo');
-      return;
-    }
+  cfgAtual = cfg;
+  intervaloAtualMs = cfg.syncIntervalMs;
+  // Primeiro ciclo logo apos subir (1 min): com intervalo de 1h, esperar a 1a hora inteira
+  // deixaria a loja "sem dado" logo depois de instalar.
+  setTimeout(() => void runSyncTick(), 60_000);
+  timerAtual = setInterval(() => void runSyncTick(), cfg.syncIntervalMs);
+  return timerAtual;
+}
+
+// Trava contra sobreposicao: se um tick demorar mais que o intervalo (rede lenta, tabela
+// grande), ticks empilhados multiplicam a carga no backend em vez de so atrasar — foi
+// exatamente isso que derrubou o dashboard do Tarcisio em 24/08.
+async function tick(cfg: AgentConfig): Promise<void> {
+  {
     running = true;
     try {
       try {
@@ -378,5 +405,5 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
     } finally {
       running = false;
     }
-  }, cfg.syncIntervalMs);
+  }
 }

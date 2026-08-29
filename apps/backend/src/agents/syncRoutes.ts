@@ -108,6 +108,31 @@ async function bulkUpsert(
   }
 }
 
+// ─── Ritmo do sync por loja x tabela (em memoria; 1 processo) ─────────────────────────
+const LOTE_CHEIO = 1000; // BATCH_SIZE do agente
+const SYNC_MIN_INTERVAL_MS = Number(process.env.SYNC_MIN_INTERVAL_MS ?? 60 * 60 * 1000);
+interface EstadoRitmo { ultimoAceito: number; ultimoLoteCheio: boolean }
+const ritmoPorChave = new Map<string, EstadoRitmo>();
+const chaveRitmo = (storeId: string, table: string): string => `${storeId}|${table}`;
+
+function decidirRitmo(storeId: string, table: string): { aceita: true } | { aceita: false; esperarMs: number } {
+  const e = ritmoPorChave.get(chaveRitmo(storeId, table));
+  if (!e) return { aceita: true }; // nunca vimos (ou processo reiniciou): deixa passar
+  if (e.ultimoLoteCheio) return { aceita: true }; // backfill em andamento
+  const decorrido = Date.now() - e.ultimoAceito;
+  if (decorrido >= SYNC_MIN_INTERVAL_MS) return { aceita: true };
+  return { aceita: false, esperarMs: SYNC_MIN_INTERVAL_MS - decorrido };
+}
+
+function registrarLote(storeId: string, table: string, linhas: number): void {
+  ritmoPorChave.set(chaveRitmo(storeId, table), { ultimoAceito: Date.now(), ultimoLoteCheio: linhas >= LOTE_CHEIO });
+}
+
+/** "Sincronizar agora": libera todas as tabelas da loja pra proxima chamada do agente. */
+export function liberarRitmo(storeId: string): void {
+  for (const k of [...ritmoPorChave.keys()]) if (k.startsWith(`${storeId}|`)) ritmoPorChave.delete(k);
+}
+
 // Erros que sao da LINHA (dado invalido), nao do banco/infra: so nesses vale pular e seguir.
 // 22003 = numeric overflow, 22P02 = texto invalido, 22007/22008 = data invalida, 23502 = null
 // em NOT NULL. Timeout, pool, conexao caida (P1001, 57014...) continuam estourando o lote —
@@ -166,6 +191,19 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     if (pausadas.includes(body.table)) {
       reply.header('Retry-After', '300');
       return reply.status(503).send({ error: { code: 'sync_paused', message: `Sincronizacao de ${body.table} pausada temporariamente pelo operador` } });
+    }
+
+    // RITMO DITADO PELO SERVIDOR (decisao do dono 28/08: plano free, custo minimo). Regra:
+    //  - loja em BACKFILL (o ultimo lote aceito veio cheio) -> aceita o proximo na hora, senao
+    //    uma loja nova levaria dias pra subir o historico;
+    //  - loja EM DIA (ultimo lote veio parcial/vazio) -> so aceita de novo depois de
+    //    SYNC_MIN_INTERVAL_MS (1h). O agente recebe 503 + Retry-After e tenta depois — barato,
+    //    nao toca no banco. Vale pros agentes antigos (tick de 90s) sem precisar atualizar.
+    //  - "Sincronizar agora" no painel limpa a trava da loja (ver /api/agents/sync-now).
+    const ritmo = decidirRitmo(ctx.storeId, body.table);
+    if (!ritmo.aceita) {
+      reply.header('Retry-After', String(Math.ceil(ritmo.esperarMs / 1000)));
+      return reply.status(503).send({ error: { code: 'sync_throttled', message: `Loja em dia; proxima sincronizacao de ${body.table} em ${Math.ceil(ritmo.esperarMs / 60000)} min` } });
     }
 
     let persisted = 0;
@@ -428,6 +466,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.validation(`Tabela desconhecida`);
     }
 
+    registrarLote(ctx.storeId, body.table, body.rows.length);
     await prisma.syncState.upsert({
       where: {
         tenantId_storeId_tableName: {
