@@ -2011,6 +2011,10 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
   stalenessSeconds: number | null;
   agentsOffline: string[];
   agentVersion: string | null;
+  // Tabelas que JA sincronizaram pelo menos uma vez nesta loja (sync_state). O painel usa pra
+  // mostrar "— ainda nao sincronizado" em vez de R$ 0 (regra do dono 28/08: zero nunca pode
+  // parecer fato quando o dado nao chegou).
+  tabelasSincronizadas: string[];
 }> {
   // "Frescor" usa o heartbeat do agente (Agent.lastSeenAt), nao SyncState.lastSyncedAt.
   // SyncState so atualiza quando ha linha NOVA pra persistir — uma tabela que ja pegou
@@ -2019,10 +2023,17 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
   // heartbeat reflete "o agente esta rodando e checando", que e o que "defasagem" deveria
   // significar — nao "achamos dado novo recentemente" (achado testando a UI de verdade
   // 24/08: alerta de "939 min de defasagem" com o agente sincronizando ha segundos).
-  const agents = await prisma.agent.findMany({
-    where: { tenantId, revokedAt: null, ...(storeId ? { storeId } : {}) },
-    select: { storeId: true, lastSeenAt: true, agentVersion: true },
-  });
+  const [agents, estados] = await Promise.all([
+    prisma.agent.findMany({
+      where: { tenantId, revokedAt: null, ...(storeId ? { storeId } : {}) },
+      select: { storeId: true, lastSeenAt: true, agentVersion: true },
+    }),
+    prisma.syncState.findMany({
+      where: { tenantId, ...(storeId ? { storeId } : {}) },
+      select: { tableName: true },
+    }),
+  ]);
+  const tabelasSincronizadas = [...new Set(estados.map((e) => e.tableName))];
   const agentVersion = agents.map((a) => a.agentVersion).filter((v): v is string => !!v).sort()[0] ?? null;
   const mostRecentSeen = agents.reduce<Date | null>(
     (acc, a) => (a.lastSeenAt && (!acc || a.lastSeenAt > acc) ? a.lastSeenAt : acc),
@@ -2034,5 +2045,6 @@ async function getFreshnessMeta(tenantId: string, storeId: string | null): Promi
     stalenessSeconds: mostRecentSeen ? Math.round((Date.now() - mostRecentSeen.getTime()) / 1000) : null,
     agentsOffline: offline.map((a) => a.storeId),
     agentVersion,
+    tabelasSincronizadas,
   };
 }
