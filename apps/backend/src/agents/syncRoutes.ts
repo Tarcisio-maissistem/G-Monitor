@@ -152,9 +152,21 @@ async function authenticateAgent(
 
 export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
   // POST /api/agent/sync  (chamado pelo agente)
-  app.post('/api/agent/sync', async (req, _reply) => {
+  app.post('/api/agent/sync', async (req, reply) => {
     const ctx = await authenticateAgent(req.headers.authorization);
     const body = syncBatchSchema.parse(req.body);
+
+    // FREIO DE MAO (incidente 28/08): SYNC_PAUSE_TABLES=saleItems,... faz o servidor recusar
+    // o lote dessas tabelas com 503. O agente NAO avanca o checkpoint e tenta de novo no proximo
+    // ciclo — zero perda de dado, so adia. Serve pra tirar carga do Postgres quando ele satura
+    // (menor plano da Supabase: 3 lojas fazendo backfill de ITEVENDAS ao mesmo tempo derrubaram
+    // o banco a ponto de o health-check da propria Supabase dar 'Failed to connect'). Ligar/
+    // desligar e so mexer no .env e reiniciar; nao precisa de deploy.
+    const pausadas = (process.env.SYNC_PAUSE_TABLES ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+    if (pausadas.includes(body.table)) {
+      reply.header('Retry-After', '300');
+      return reply.status(503).send({ error: { code: 'sync_paused', message: `Sincronizacao de ${body.table} pausada temporariamente pelo operador` } });
+    }
 
     let persisted = 0;
 
