@@ -90,11 +90,29 @@ const baseFilters = z.object({
   storeId: z.string().optional(),
 });
 
-function resolveStoreScope(req: { user?: { storeId?: string; role: string } }, requestedStoreId?: string): string | null {
+function resolveStoreScope(req: { user?: { storeId?: string; role: string }; lojaUnica?: string | null }, requestedStoreId?: string): string | null {
   // Operador é forçado para sua propria loja, ignorando o parametro.
   if (req.user?.role === 'operador') return req.user.storeId ?? null;
-  if (!requestedStoreId || requestedStoreId === 'all') return null;
+  if (!requestedStoreId || requestedStoreId === 'all') {
+    // Empresa com UMA loja: "todas as lojas" == essa loja. Devolver o storeId em vez de null
+    // faz TODAS as consultas usarem os indices (tenantId, storeId, data) — sem ele o Postgres
+    // varre a empresa inteira (incidente 28/08: payments com 394 mil linhas, 15-18s por
+    // consulta, pooler do plano free esgotado). Mesmo resultado, plano muito melhor.
+    return req.lojaUnica ?? null;
+  }
   return requestedStoreId;
+}
+
+// Cache em memoria tenant -> storeId da unica loja (ou null se tiver 0 ou 2+). Evita 1 query
+// por request de relatorio; 5 min de TTL basta (loja nova e evento raro).
+const lojaUnicaCache = new Map<string, { storeId: string | null; ate: number }>();
+async function lojaUnicaDe(tenantId: string): Promise<string | null> {
+  const hit = lojaUnicaCache.get(tenantId);
+  if (hit && hit.ate > Date.now()) return hit.storeId;
+  const lojas = await prisma.store.findMany({ where: { tenantId, deletedAt: null }, select: { id: true }, take: 2 });
+  const storeId = lojas.length === 1 ? lojas[0]!.id : null;
+  lojaUnicaCache.set(tenantId, { storeId, ate: Date.now() + 5 * 60 * 1000 });
+  return storeId;
 }
 
 // Sem from/to explicitos, o padrao e o mes atual (dia 1 ate hoje) — nao "ultimos 30 dias".
@@ -158,6 +176,13 @@ function buildRevenueBuckets(
 }
 
 export async function reportRoutes(app: FastifyInstance): Promise<void> {
+  // Resolve a loja unica UMA vez por request (cache em memoria), pra o resolveStoreScope
+  // continuar sincrono em todos os 40 handlers.
+  app.addHook('preHandler', async (req) => {
+    const u = (req as unknown as { user?: { tenantId?: string } }).user;
+    if (u?.tenantId) (req as unknown as { lojaUnica?: string | null }).lojaUnica = await lojaUnicaDe(u.tenantId);
+  });
+
   app.get('/api/reports', { preHandler: [requireAuth, requireCapability('reports.view')] }, async () => {
     return {
       reports: [
@@ -1291,7 +1316,13 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: hojeIni } }, _sum: { totalValue: true }, _count: true }),
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: ontemIni, lte: ontemFim } }, _sum: { totalValue: true }, _count: true }),
       prisma.sale.findMany({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, distinct: ['saleDate'], select: { saleDate: true } }),
-      buildCashConference(req.user!.tenantId, storeId, from, to),
+      // Conferencia de caixa e a consulta mais pesada da tela; se ela estourar o timeout do
+      // banco, o dashboard INTEIRO nao pode virar 500 (incidente 28/08). Cai pra null e a tela
+      // mostra o card como indisponivel.
+      buildCashConference(req.user!.tenantId, storeId, from, to).catch((err) => {
+        logger.warn({ err: String((err as Error).message).slice(0, 120) }, 'dashboard/today: conferencia de caixa indisponivel');
+        return null;
+      }),
       // Ate onde o historico ja chegou. O agente sincroniza do mais ANTIGO pro mais novo, entao
       // uma loja recem-instalada fica meses "para tras" — sem isso o card mostra R$ 0 como se a
       // loja nao tivesse vendido, em vez de dizer que o dado ainda nao chegou (pedido do dono
@@ -1330,7 +1361,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       diasTrabalhados,
       mediaDiaria: diasTrabalhados > 0 ? totalPeriodo / diasTrabalhados : 0,
       // saldo CONTABIL (recebidoCaixa, registrado no expediente) x FISICO (contado no fechamento)
-      caixaFisico: { ...conferencia.totals, fechamentos: conferencia.closings.length, comQuebra: conferencia.fechamentosComQuebra },
+      caixaFisico: conferencia
+        ? { ...conferencia.totals, fechamentos: conferencia.closings.length, comQuebra: conferencia.fechamentosComQuebra }
+        : { esperado: 0, contado: 0, quebra: 0, fechamentos: 0, comQuebra: 0, indisponivel: true },
       quality: recebidoAgg.quality,
       meta,
     };
