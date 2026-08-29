@@ -26,7 +26,11 @@ const SALE_OF_RECORD = { cancelled: false as const, modelo: { not: '65' } };
 // TODOS os handlers (1x RTT). TTL 90s (era 45s) pra casar com o syncIntervalMs padrao novo
 // do agente (tambem 90s, ver installer) — nao precisa de cache mais curto que o proprio
 // intervalo de sincronizacao.
-const REPORT_CACHE_TTL_SECONDS = 90;
+// 10 min (era 90s). Incidente 28/08: com 3 lojas (payments 394 mil, sale_items 1,1 mi) cada
+// relatorio pesado leva 15-18s no plano free da Supabase; a cada expiracao do cache o dashboard
+// disparava tudo de novo e ocupava o pooler inteiro. O frescor do DADO continua visivel pelo
+// heartbeat do agente (meta.stalenessSeconds), que nao passa por este cache.
+const REPORT_CACHE_TTL_SECONDS = 600;
 
 // Retry curto pra P1001 ("Can't reach database server") — visto ao vivo 24/08 como blip
 // raro e transitorio (~1 em 120 chamadas, sem relacao com carga do proprio app), tipico de
@@ -45,6 +49,13 @@ async function withDbRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// Requisicoes IGUAIS em voo compartilham a mesma promise (single-flight). Achado no incidente
+// de 28/08: o dashboard dispara 4-5 chamadas ao abrir e o React Query repete em foco/reconexao;
+// antes do cache do Redis ser preenchido, a MESMA consulta pesada (payments, 394 mil linhas)
+// aparecia 2x rodando ao mesmo tempo no pg_stat_activity — dobro de carga num banco ja no
+// limite do plano. Com single-flight, a 2a chamada espera a 1a em vez de repetir no Postgres.
+const emVoo = new Map<string, Promise<unknown>>();
+
 function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req) => Promise<unknown>) {
   return async (req: Req): Promise<unknown> => {
     const tenantId = (req as unknown as { user?: { tenantId?: string } }).user?.tenantId ?? 'anon';
@@ -56,7 +67,11 @@ function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req
       logger.error({ err }, 'redis cache read failed, seguindo sem cache');
     }
 
-    const result = await withDbRetry(() => handler(req));
+    const pendente = emVoo.get(key);
+    if (pendente) return pendente;
+    const execucao = withDbRetry(() => handler(req)).finally(() => emVoo.delete(key));
+    emVoo.set(key, execucao);
+    const result = await execucao;
 
     try {
       await redis.setex(key, REPORT_CACHE_TTL_SECONDS, JSON.stringify(result));
