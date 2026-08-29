@@ -109,28 +109,39 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       reply.header('Retry-After', String(Math.ceil(faltam / 1000)));
       return reply.status(429).send({ error: { code: 'sync_now_rate_limited', message: `Aguarde ${Math.ceil(faltam / 60000)} min para sincronizar de novo` } });
     }
-    ultimoSyncNow.set(tenantId, Date.now());
-
     // Os PCs das lojas DESLIGAM a noite (dono, 28/08): so vale acordar quem esta ligado. Online =
     // heartbeat do WS nos ultimos 3 min. Offline: a trava fica liberada mesmo assim, entao no
     // momento em que o PC ligar o agente sincroniza no 1o tick — e o painel diz isso ao usuario.
     const LIMITE_ONLINE_MS = 3 * 60 * 1000;
-    const agents = await prisma.agent.findMany({
-      where: { tenantId, revokedAt: null },
-      select: { id: true, storeId: true, lastSeenAt: true, agentVersion: true, store: { select: { name: true } } },
-    });
+    // Prazo TOTAL de 12s: no incidente de 28/08 a 1a chamada ficou presa esperando o banco
+    // (pooler saturado) e o painel nunca recebeu resposta. Banco lento nao pode travar um
+    // botao — devolve o que der e explica.
+    const prazo = <T,>(pr: Promise<T>, ms: number, rotulo: string): Promise<T> =>
+      Promise.race([pr, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${rotulo}: prazo de ${ms}ms`)), ms))]);
+    let agents: Array<{ id: string; storeId: string; lastSeenAt: Date | null; agentVersion: string | null; store: { name: string } }>;
+    try {
+      agents = await prazo(prisma.agent.findMany({
+        where: { tenantId, revokedAt: null },
+        select: { id: true, storeId: true, lastSeenAt: true, agentVersion: true, store: { select: { name: true } } },
+      }), 8_000, 'consulta de agentes');
+    } catch {
+      throw Errors.validation('O banco esta lento agora e nao consegui listar os agentes. Tente de novo em instantes.');
+    }
     const status: Array<{ loja: string; online: boolean; acordado: boolean; versao: string | null; vistoHa: number | null }> = [];
-    for (const a of agents) {
+    await Promise.all(agents.map(async (a) => {
       liberarRitmo(a.storeId);
       const vistoHa = a.lastSeenAt ? Date.now() - a.lastSeenAt.getTime() : null;
       const online = vistoHa != null && vistoHa < LIMITE_ONLINE_MS;
       let acordado = false;
       if (online) {
         // agente >= 0.9.7 responde ao syncNow; antigo (90s) pega a liberacao no proximo tick
-        try { await callAgent(a.id, 'syncNow', {}, 5_000); acordado = true; } catch { /* versao antiga ou caiu agora */ }
+        try { await prazo(callAgent(a.id, 'syncNow', {}, 4_000), 4_500, 'rpc'); acordado = true; } catch { /* versao antiga ou caiu agora */ }
       }
       status.push({ loja: a.store.name, online, acordado, versao: a.agentVersion, vistoHa: vistoHa != null ? Math.round(vistoHa / 1000) : null });
-    }
+    }));
+    // so conta o clique depois de ter funcionado: se o banco engasgar no meio, o usuario pode
+    // tentar de novo sem esperar 5 min
+    ultimoSyncNow.set(tenantId, Date.now());
     return { agentes: status, algumOnline: status.some((s) => s.online) };
   });
 
