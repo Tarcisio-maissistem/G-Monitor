@@ -24,8 +24,9 @@ param(
   [string]$FbPassword = "masterkey",
   [string]$FbUser = "SYSDBA",
   [string]$Channel = "stable",
-  # 90s (nao 30s): servico leve, intervalo ja validado em producao.
-  [int]$SyncIntervalMs = 90000
+  # 1 hora (dono 28/08): plano free da Supabase, custo minimo. Quem quiser dado fresco clica em
+  # 'Sincronizar' no painel. O servidor tambem dita o intervalo no handshake.
+  [int]$SyncIntervalMs = 3600000
 )
 
 $ErrorActionPreference = "Stop"

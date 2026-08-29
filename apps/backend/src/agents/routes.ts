@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Errors } from '@gmonitor/shared';
+import { liberarRitmo } from './syncRoutes.js';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
@@ -95,6 +96,44 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // RPC ad-hoc para diagnostico (admin only)
+  // "Sincronizar agora" (dono 28/08): o agente so sincroniza de hora em hora; quem quiser o
+  // dado fresco clica. Limpa a trava de ritmo das lojas da empresa e ACORDA os agentes online
+  // via RPC (agente >= 0.9.7); agente antigo pega a liberacao no proximo tick de 90s. Limite
+  // de 1 clique a cada 5 min por empresa — o objetivo e custo minimo, nao um botao de spam.
+  const ultimoSyncNow = new Map<string, number>();
+  app.post('/api/agents/sync-now', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req, reply) => {
+    const tenantId = req.user!.tenantId;
+    const ultimo = ultimoSyncNow.get(tenantId) ?? 0;
+    const faltam = 5 * 60 * 1000 - (Date.now() - ultimo);
+    if (faltam > 0) {
+      reply.header('Retry-After', String(Math.ceil(faltam / 1000)));
+      return reply.status(429).send({ error: { code: 'sync_now_rate_limited', message: `Aguarde ${Math.ceil(faltam / 60000)} min para sincronizar de novo` } });
+    }
+    ultimoSyncNow.set(tenantId, Date.now());
+
+    // Os PCs das lojas DESLIGAM a noite (dono, 28/08): so vale acordar quem esta ligado. Online =
+    // heartbeat do WS nos ultimos 3 min. Offline: a trava fica liberada mesmo assim, entao no
+    // momento em que o PC ligar o agente sincroniza no 1o tick — e o painel diz isso ao usuario.
+    const LIMITE_ONLINE_MS = 3 * 60 * 1000;
+    const agents = await prisma.agent.findMany({
+      where: { tenantId, revokedAt: null },
+      select: { id: true, storeId: true, lastSeenAt: true, agentVersion: true, store: { select: { name: true } } },
+    });
+    const status: Array<{ loja: string; online: boolean; acordado: boolean; versao: string | null; vistoHa: number | null }> = [];
+    for (const a of agents) {
+      liberarRitmo(a.storeId);
+      const vistoHa = a.lastSeenAt ? Date.now() - a.lastSeenAt.getTime() : null;
+      const online = vistoHa != null && vistoHa < LIMITE_ONLINE_MS;
+      let acordado = false;
+      if (online) {
+        // agente >= 0.9.7 responde ao syncNow; antigo (90s) pega a liberacao no proximo tick
+        try { await callAgent(a.id, 'syncNow', {}, 5_000); acordado = true; } catch { /* versao antiga ou caiu agora */ }
+      }
+      status.push({ loja: a.store.name, online, acordado, versao: a.agentVersion, vistoHa: vistoHa != null ? Math.round(vistoHa / 1000) : null });
+    }
+    return { agentes: status, algumOnline: status.some((s) => s.online) };
+  });
+
   app.post('/api/agents/:id/ping', { preHandler: [requireAuth, requireCapability('agent.rotate')] }, async (req) => {
     const { id } = req.params as { id: string };
     const agent = await prisma.agent.findFirst({

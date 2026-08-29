@@ -17,7 +17,7 @@ const configSchema = z.object({
     user: z.string().default('SYSDBA'),
     password: z.string(),
   }),
-  syncIntervalMs: z.number().int().default(30_000),
+  syncIntervalMs: z.number().int().default(60 * 60 * 1000), // 1h (dono 28/08: plano free, custo minimo); o servidor pode sobrescrever no handshake
   updateChannel: z.enum(['stable', 'beta', 'canary']).default('stable'),
 });
 

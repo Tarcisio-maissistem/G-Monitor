@@ -11,6 +11,7 @@ import {
 } from '@gmonitor/rpc-contracts';
 import type { AgentConfig } from '../config.js';
 import { logger } from '../logger.js';
+import { setSyncInterval } from '../sync/syncer.js';
 import { handleRpc } from './rpcHandler.js';
 
 // Cliente WebSocket que mantem conexao persistente com o SaaS.
@@ -120,6 +121,8 @@ export class AgentWsClient {
       // events e responses do servidor: logar e ignorar (sem RPC pendente saindo do agente no MVP)
       if (env.data.type === 'event' && env.data.name === 'handshake_ack') {
         logger.info({ payload: env.data.payload }, 'handshake ack');
+        const ms = (env.data.payload as { syncIntervalMs?: unknown } | undefined)?.syncIntervalMs;
+        if (typeof ms === 'number') setSyncInterval(ms); // o servidor dita o ritmo
       }
       return;
     }
