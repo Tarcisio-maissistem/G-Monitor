@@ -12,7 +12,6 @@ import { UsuariosPage } from './pages/UsuariosPage';
 import { ProdutosPage } from './pages/ProdutosPage';
 import { ClientesPage } from './pages/ClientesPage';
 import { PagamentosPage } from './pages/PagamentosPage';
-import { MetaMensalPage } from './pages/MetaMensalPage';
 import { FinanceiroPage } from './pages/FinanceiroPage';
 import { MovimentoCaixaPage } from './pages/MovimentoCaixaPage';
 import { CaixaDetalhadoPage } from './pages/CaixaDetalhadoPage';
@@ -96,7 +95,6 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/produtos') return <ProdutosPage />;
   if (path === '/clientes') return <ClientesPage />;
   if (path === '/pagamentos') return <PagamentosPage />;
-  if (path === '/meta-mensal') return <MetaMensalPage />;
   if (path === '/financeiro') return <FinanceiroPage />;
   if (path === '/movimento-caixa') return <MovimentoCaixaPage />;
   if (path === '/caixa-detalhado') return <CaixaDetalhadoPage />;

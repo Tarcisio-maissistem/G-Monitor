@@ -6,6 +6,7 @@ import { Errors } from '@gmonitor/shared';
 import { logger } from '../logger.js';
 import { prisma, prismaSync } from '../db/prisma.js';
 import { hashToken } from '../auth/tokens.js';
+import { marcarDadosNovos } from '../reports/routes.js';
 
 // Endpoint HTTP usado pelo AGENTE para empurrar lotes de sync.
 // Auth: Bearer agent token (mesmo formato de WS).
@@ -467,6 +468,9 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     }
 
     registrarLote(ctx.storeId, body.table, body.rows.length);
+    // Dado novo persistido => muda a versao do cache de relatorios (ver cached() em reports):
+    // so lote com linha de verdade invalida; heartbeat/lote vazio nao derruba cache quente.
+    if (persisted > 0) await marcarDadosNovos(ctx.tenantId);
     await prisma.syncState.upsert({
       where: {
         tenantId_storeId_tableName: {

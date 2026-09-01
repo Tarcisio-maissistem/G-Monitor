@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { useRoute } from '../lib/router';
 import { useToast } from '../components/Toast';
 import { MaskedInput } from '../components/MaskedInput';
-import { applyCpfOrCnpj } from '../lib/masks';
+import { applyCpfOrCnpj, parseCurrency } from '../lib/masks';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Spinner } from '../components/Spinner';
 
@@ -17,6 +17,7 @@ interface Tenant {
   subscriptionStatus: string;
   pendingApproval: boolean;
   createdAt: string;
+  monthlyGoal: number;
   _count: { stores: number; users: number; agents: number };
 }
 
@@ -124,6 +125,7 @@ export function EmpresasPage(): JSX.Element {
               <th className="px-4 py-3 text-left">CNPJ</th>
               <th className="px-4 py-3 text-left">Plano</th>
               <th className="px-4 py-3 text-left">Situação</th>
+              <th className="px-4 py-3 text-right">Meta mensal</th>
               <th className="px-4 py-3 text-center">Servidor</th>
               <th className="px-4 py-3 text-right">Ações</th>
             </tr>
@@ -144,6 +146,9 @@ export function EmpresasPage(): JSX.Element {
                   {t.pendingApproval && (
                     <span className="ml-1.5 px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">Pendente aprovação</span>
                   )}
+                </td>
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <MetaCell tenant={t} />
                 </td>
                 <td className="px-4 py-3 text-center">
                   {t._count.agents > 0 ? (
@@ -190,7 +195,7 @@ export function EmpresasPage(): JSX.Element {
             ))}
             {data?.tenants.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                   Nenhuma empresa cadastrada. Clique em "Nova Empresa" pra começar.
                 </td>
               </tr>
@@ -300,5 +305,48 @@ function NewTenantModal({
         </div>
       </form>
     </div>
+  );
+}
+
+
+// Meta mensal no CADASTRO da empresa (dono 01/09): a guia "Meta Mensal" saiu do menu; a
+// barra vive no dashboard e o valor e definido aqui pelo admin.
+function MetaCell({ tenant }: { tenant: Tenant }): JSX.Element {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState('');
+  const salvar = useMutation({
+    mutationFn: (monthlyGoal: number) =>
+      api<{ ok: boolean }>(`/api/admin/tenants/${tenant.id}/monthly-goal`, { method: 'PATCH', body: JSON.stringify({ monthlyGoal }) }),
+    onSuccess: () => {
+      toast.push({ type: 'success', message: 'Meta salva!' });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'tenants'] });
+      queryClient.invalidateQueries({ queryKey: ['monthly-goal'] });
+      setEditando(false);
+      setValor('');
+    },
+    onError: (err: Error) => toast.push({ type: 'error', message: err.message }),
+  });
+  if (!editando) {
+    return (
+      <button onClick={() => setEditando(true)} className="text-slate-700 hover:text-blue-700 inline-flex items-center gap-1" title="Editar meta mensal">
+        {tenant.monthlyGoal > 0 ? tenant.monthlyGoal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : <span className="text-slate-400">definir</span>}
+        <span aria-hidden>✎</span>
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <MaskedInput mask="currency" prefix="R$" placeholder="50.000,00" value={valor} onChange={setValor} className="w-28 border rounded px-2 py-1 text-xs" />
+      <button
+        onClick={() => { const v = parseCurrency(valor); if (v >= 0) salvar.mutate(v); }}
+        disabled={salvar.isPending || !valor}
+        className="bg-blue-600 text-white px-2 py-1 rounded text-xs disabled:opacity-50"
+      >
+        {salvar.isPending ? '...' : 'OK'}
+      </button>
+      <button onClick={() => setEditando(false)} className="text-slate-400 px-1" aria-label="Cancelar">×</button>
+    </span>
   );
 }
