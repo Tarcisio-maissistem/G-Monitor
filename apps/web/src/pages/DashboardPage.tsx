@@ -10,6 +10,7 @@ import {
   PageContainer, PageHeader, KpiRow, KpiCard, QueryState, CopyWhatsAppButton, DateRangeFilter,
 } from '../components/ui';
 import { AgentStatus } from '../components/dashboard/AgentStatus';
+import { MetaSection } from '../components/dashboard/MetaSection';
 import { RevenueYoYChart } from '../components/dashboard/RevenueYoYChart';
 import { PaymentMethodsChart } from '../components/dashboard/PaymentMethodsChart';
 import { PeakHoursChart } from '../components/dashboard/PeakHoursChart';
@@ -146,6 +147,10 @@ export function DashboardPage(): JSX.Element {
           <KpiCard label="Contas pagas" info="Contas a pagar que foram baixadas (pagas a fornecedores e despesas) dentro do período." value={v('payables', formatCompactBRL(t?.contasPagas.total ?? 0))} tone="red" sub={sub('payables', `${formatInt(t?.contasPagas.count ?? 0)} baixas`)} />
         </KpiRow>
       </QueryState>
+
+      {/* Meta do mês morava numa guia própria; virou seção do dashboard (dono 01/09), com
+          comparativo do mesmo ponto do mês anterior e comemoração ao bater a meta. */}
+      {!falta('sales') && <MetaSection />}
 
       {/* Onda 1 dos cards do Gdoor Relatórios antigo (26/08): hoje × ontem com a variação já
           calculada, e o caixa em duas verdades — contábil (registrado) × físico (contado). */}

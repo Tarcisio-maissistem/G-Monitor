@@ -44,11 +44,29 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         subscriptionStatus: true,
         pendingApproval: true,
         createdAt: true,
+        meta: true,
         _count: { select: { agents: true, stores: true, users: true } },
       },
     });
-    return { tenants };
+    // Do meta so interessa a meta mensal no cadastro; nao vazar o resto (taxas, getcard etc).
+    return { tenants: tenants.map(({ meta, ...t }) => ({ ...t, monthlyGoal: Number((meta as Record<string, unknown> | null)?.monthlyGoal ?? 0) })) };
   });
+
+  // Meta mensal no CADASTRO da empresa (pedido do dono 01/09: a guia "Meta Mensal" sumiu do
+  // menu; a barra vive no dashboard e a configuracao vive aqui). Merge no meta pra nao
+  // atropelar taxas/getcard que moram no mesmo json.
+  app.patch<{ Params: { id: string } }>(
+    '/api/admin/tenants/:id/monthly-goal',
+    { preHandler: [requireAuth, requireSuperAdmin, audit({ action: 'tenant.monthly_goal', entity: 'tenant', captureBody: true })] },
+    async (req) => {
+      const body = z.object({ monthlyGoal: z.number().min(0).max(1e9) }).parse(req.body);
+      const tenant = await prisma.tenant.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { meta: true } });
+      if (!tenant) throw Errors.notFound('Empresa nao encontrada');
+      const meta = { ...((tenant.meta as Record<string, unknown>) ?? {}), monthlyGoal: body.monthlyGoal };
+      await prisma.tenant.update({ where: { id: req.params.id }, data: { meta } });
+      return { ok: true, monthlyGoal: body.monthlyGoal };
+    },
+  );
 
   // Aprova empresa que se autocadastrou pelo login (pedido do dono 24/08) — libera o
   // WS/sync do agente, que ja estava tentando conectar em backoff desde o cadastro.

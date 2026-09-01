@@ -56,10 +56,35 @@ async function withDbRetry<T>(fn: () => Promise<T>): Promise<T> {
 // limite do plano. Com single-flight, a 2a chamada espera a 1a em vez de repetir no Postgres.
 const emVoo = new Map<string, Promise<unknown>>();
 
+// CACHE POR VERSAO DE SINCRONIZACAO (pedido do dono, 01/09: "não precisa sempre que abrir
+// fazer consulta... somente coisas novas do tempo da última sincronização, e isso serve para
+// todas as consultas"). O sync grava datav:{tenantId} (timestamp) a cada lote persistido
+// (marcarDadosNovos, chamada em agents/syncRoutes). A chave do cache inclui esse valor:
+// - sem sync novo => mesma chave => Redis responde por ate 24h SEM tocar o Postgres;
+// - chegou lote novo => datav muda => chave nova => o banco e lido UMA vez e cacheia de novo.
+// A data do dia entra na chave porque dashboard/today depende do relogio ("hoje"/"ontem"):
+// na virada de meia-noite a chave muda mesmo sem sync, senao o payload de ontem viraria hoje.
+// Sem datav (Redis reiniciado / tenant nunca sincronizou) cai no TTL curto de 600s de sempre.
+const DATA_VERSION_CACHE_TTL_SECONDS = 24 * 3600;
+export async function marcarDadosNovos(tenantId: string): Promise<void> {
+  try {
+    await redis.set(`datav:${tenantId}`, String(Date.now()));
+  } catch (err) {
+    logger.error({ err }, 'redis datav write failed, cache seguira no TTL curto');
+  }
+}
+
 function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req) => Promise<unknown>) {
   return async (req: Req): Promise<unknown> => {
     const tenantId = (req as unknown as { user?: { tenantId?: string } }).user?.tenantId ?? 'anon';
-    const key = `report:${tenantId}:${reportId}:${JSON.stringify(req.query)}`;
+    let datav: string | null = null;
+    try {
+      datav = await redis.get(`datav:${tenantId}`);
+    } catch {
+      // sem datav segue no TTL curto
+    }
+    const hoje = new Date().toISOString().slice(0, 10);
+    const key = `report:${tenantId}:${datav ?? 'v0'}:${hoje}:${reportId}:${JSON.stringify(req.query)}`;
     try {
       const hit = await redis.get(key);
       if (hit) return JSON.parse(hit);
@@ -74,7 +99,7 @@ function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req
     const result = await execucao;
 
     try {
-      await redis.setex(key, REPORT_CACHE_TTL_SECONDS, JSON.stringify(result));
+      await redis.setex(key, datav ? DATA_VERSION_CACHE_TTL_SECONDS : REPORT_CACHE_TTL_SECONDS, JSON.stringify(result));
     } catch (err) {
       logger.error({ err }, 'redis cache write failed, seguindo sem cache');
     }
@@ -858,13 +883,18 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     year: z.coerce.number().int(),
     month: z.coerce.number().int().min(1).max(12),
     storeId: z.string().optional(),
+    // Corte no dia N do mes (compara "mesmo ponto" com o mes anterior no dashboard):
+    // uptoDay=15 soma as vendas so ate o dia 15, mesmo o mes ja estando completo.
+    uptoDay: z.coerce.number().int().min(1).max(31).optional(),
   });
 
-  app.get('/api/reports/monthly-goal', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
+  app.get('/api/reports/monthly-goal', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('monthly-goal', async (req) => {
     const query = yearMonthFilters.parse(req.query);
     const storeId = resolveStoreScope(req, query.storeId);
     const from = new Date(Date.UTC(query.year, query.month - 1, 1));
-    const to = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59));
+    const fimDoMes = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59));
+    const corte = query.uptoDay ? new Date(Date.UTC(query.year, query.month - 1, query.uptoDay, 23, 59, 59)) : fimDoMes;
+    const to = corte < fimDoMes ? corte : fimDoMes;
 
     const [tenant, agg] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } }),
@@ -896,7 +926,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       totalDays,
       elapsedDays,
     };
-  });
+  }));
 
   app.get('/api/reports/financial', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('financial', async (req) => {
     const query = baseFilters.parse(req.query);
