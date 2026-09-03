@@ -10,7 +10,7 @@ import { buildCashflow, buildForecast, pickGranularity, type Granularity } from 
 import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
 import { coletar, CredencialInvalida } from '../conciliacao/getcard.js';
 import { conciliar } from '../conciliacao/matcher.js';
-import { calcularCusto, type RegraTaxa } from '../conciliacao/taxas.js';
+import { calcularCusto, escolherRegra, modalidadeDaBandeira, type RegraTaxa } from '../conciliacao/taxas.js';
 import { open, isSealed } from '../lib/secretBox.js';
 
 // P4 (26/08, confirmado no Firebird do piloto): a venda de REGISTRO e o PV (pre-venda) e a
@@ -1676,6 +1676,106 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
   // ─── Conciliacao: extrato do portal x sistema (Fase 3, 27/08) ──────────────────────
   // Busca o extrato NA HORA (botao "Buscar extrato"), nao por cron: raspagem autenticada
   // agendada quebra sem ninguem ver (D25). Compara so os dias que o agente ja sincronizou.
+  // ─── "Quanto deve CAIR no banco no dia" (pedido do dono 01/09) ─────────────────────────
+  // Deposito do dia D = linhas do extrato da maquininha cujo prazo vence em D (debito/credito
+  // D+1 util, por bandeira) + PIX do proprio dia (Shipay, 0%, mesmo dia). Agrupado pelo BANCO
+  // de recebimento da ficha do adquirente (REDE->Itau, CIELO->Bradesco). Linha sem regra ativa
+  // fica separada — assumir 0% mentiria o valor pra cima.
+  app.get('/api/reports/conciliacao/banco-dia', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('conciliacao-banco-dia', async (req) => {
+    const query = z.object({ date: z.string().date().optional(), storeId: z.string().optional() }).parse(req.query);
+    const dia = query.date ?? new Date().toISOString().slice(0, 10);
+    const storeId = resolveStoreScope(req, query.storeId);
+    const tenantId = req.user!.tenantId;
+
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { meta: true } });
+    const meta = (tenant?.meta ?? {}) as Record<string, unknown>;
+    const regras = (meta.taxasAdquirente ?? []) as RegraTaxa[];
+    const fichas = (meta.adquirentes ?? []) as Array<{ nome: string; banco: string }>;
+    const roteamento = (meta.roteamento ?? {}) as Record<string, string>;
+    const bancoDe = (acq: string): string => fichas.find((f) => f.nome.toUpperCase() === acq.toUpperCase())?.banco || '(banco não cadastrado)';
+
+    // dias uteis: pula sabado/domingo (feriado nao entra — o deposito atrasa 1 dia nesses casos)
+    const addUteis = (iso: string, n: number): string => {
+      const d = new Date(`${iso}T12:00:00Z`);
+      let passos = n;
+      while (passos > 0) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w !== 0 && w !== 6) passos--; }
+      return d.toISOString().slice(0, 10);
+    };
+    const subUteis = (iso: string, n: number): string => {
+      const d = new Date(`${iso}T12:00:00Z`);
+      let passos = n;
+      while (passos > 0) { d.setUTCDate(d.getUTCDate() - 1); const w = d.getUTCDay(); if (w !== 0 && w !== 6) passos--; }
+      return d.toISOString().slice(0, 10);
+    };
+    const maxDias = Math.min(10, Math.max(1, ...regras.filter((r) => r.ativo !== false).map((r) => r.daysToReceive ?? 1)));
+    const from = subUteis(dia, maxDias);
+
+    const g = (meta.getcard ?? {}) as { user?: string; senha?: string };
+    interface Deposito { banco: string; bruto: number; taxa: number; liquido: number; transacoes: number; adquirentes: Set<string> }
+    const bancos = new Map<string, Deposito>();
+    const dep = (banco: string): Deposito => {
+      const cur = bancos.get(banco) ?? { banco, bruto: 0, taxa: 0, liquido: 0, transacoes: 0, adquirentes: new Set<string>() };
+      bancos.set(banco, cur); return cur;
+    };
+    let semRegra = { bruto: 0, transacoes: 0 };
+    let extratoOk = false;
+
+    if (g.user && isSealed(g.senha)) {
+      try {
+        const { linhas: extrato } = await coletar({ user: g.user, password: open(g.senha!), from, to: dia });
+        extratoOk = true;
+        for (const linha of extrato) {
+          if (!linha.autorizada) continue;
+          const modalidade = modalidadeDaBandeira(linha.bandeira, linha.adquirente);
+          if (modalidade === 'pix') continue; // PIX entra pelo GDOOR abaixo (mesmo dia)
+          const regra = escolherRegra(regras, { acquirer: linha.adquirente, bandeira: linha.bandeira, valor: linha.valor, parcelas: linha.parcelas }, modalidade);
+          const caiEm = addUteis(linha.data, regra?.daysToReceive ?? 1);
+          if (caiEm !== dia) continue;
+          if (!regra) { semRegra.bruto += linha.valor; semRegra.transacoes++; continue; }
+          const taxa = (linha.valor * regra.percent) / 100 + (regra.fixedValue ?? 0);
+          const d = dep(bancoDe(linha.adquirente));
+          d.bruto += linha.valor; d.taxa += taxa; d.liquido += linha.valor - taxa; d.transacoes++; d.adquirentes.add(linha.adquirente);
+        }
+      } catch (err) {
+        logger.warn({ err }, 'banco-dia: extrato indisponivel, seguindo so com PIX');
+      }
+    }
+
+    // PIX do proprio dia (Shipay/estatico: cai no mesmo dia, taxa 0 salvo regra cadastrada)
+    const [pixGroups, metaFresh] = await Promise.all([
+      prisma.payment.groupBy({
+        by: ['especie', 'paymentType'],
+        where: { tenantId, ...(storeId ? { storeId } : {}), paymentDate: { gte: new Date(`${dia}T00:00:00Z`), lte: new Date(`${dia}T23:59:59Z`) }, OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }] },
+        _sum: { value: true }, _count: true,
+      }),
+      getFreshnessMeta(tenantId, storeId),
+    ]);
+    let pix = { bruto: 0, transacoes: 0 };
+    for (const gr of pixGroups) {
+      const ch = feeChannel(gr.especie, gr.paymentType);
+      if (ch !== 'pix_tef' && ch !== 'pix_estatico') continue;
+      pix.bruto += Number(gr._sum.value ?? 0); pix.transacoes += gr._count;
+    }
+    if (pix.transacoes > 0) {
+      const adqPix = roteamento.pix ?? 'SHIPAY';
+      const regraPix = regras.find((r) => r.ativo !== false && r.modalidade === 'pix' && r.acquirer.toUpperCase() === adqPix.toUpperCase());
+      const taxa = (pix.bruto * (regraPix?.percent ?? 0)) / 100;
+      const d = dep(bancoDe(adqPix));
+      d.bruto += pix.bruto; d.taxa += taxa; d.liquido += pix.bruto - taxa; d.transacoes += pix.transacoes; d.adquirentes.add(`${adqPix} (PIX)`);
+    }
+
+    const lista = [...bancos.values()].map((b) => ({ ...b, adquirentes: [...b.adquirentes] })).sort((a, b) => b.liquido - a.liquido);
+    return {
+      data: {
+        dia, extratoOk,
+        bancos: lista,
+        totalLiquido: lista.reduce((a, b) => a + b.liquido, 0),
+        semRegra,
+      },
+      meta: metaFresh,
+    };
+  }));
+
   app.get('/api/reports/conciliacao/extrato', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req) => {
     const query = baseFilters.parse(req.query);
     const { from, to } = defaultPeriod(query.from, query.to);
