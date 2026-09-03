@@ -77,3 +77,21 @@ describe('custo sobre o extrato real de agosto', () => {
     expect(r.bruto).toBeCloseTo(275165.03, 2); // o bruto sem regra nao entra
   });
 });
+
+describe('beneficio e regra inativa (config 01/09)', () => {
+  it('VR/ALELO classificam como beneficio', () => {
+    expect(modalidadeDaBandeira('VR')).toBe('beneficio');
+    expect(modalidadeDaBandeira('ALELO')).toBe('beneficio');
+  });
+  it('regra com ativo=false fica fora do calculo (linha vira "sem regra")', () => {
+    const regras = [{ acquirer: 'CIELO', bandeira: 'VR', modalidade: 'beneficio' as const, percent: 0, ativo: false }];
+    const r = calcularCusto([{ acquirer: 'CIELO', bandeira: 'VR', valor: 100 }], regras);
+    expect(r.semRegra.transacoes).toBe(1);
+    expect(r.bruto).toBe(0);
+  });
+  it('regra ativa de beneficio aplica normal', () => {
+    const regras = [{ acquirer: 'CIELO', bandeira: 'VR', modalidade: 'beneficio' as const, percent: 3.5, ativo: true }];
+    const r = calcularCusto([{ acquirer: 'CIELO', bandeira: 'VR', valor: 100 }], regras);
+    expect(r.taxa).toBeCloseTo(3.5);
+  });
+});

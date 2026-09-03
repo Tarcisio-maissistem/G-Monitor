@@ -333,17 +333,30 @@ export interface CobrancasSemVendaResponse {
 }
 
 // ---------- Taxas por adquirente + bandeira + modalidade (27/08) ----------
-export type Modalidade = 'debito' | 'credito' | 'pix';
+export type Modalidade = 'debito' | 'credito' | 'pix' | 'beneficio';
 export interface TaxaAdquirente {
   acquirer: string;
   bandeira: string | null; // null = qualquer bandeira do mesmo adquirente/modalidade
   modalidade: Modalidade;
-  percent: number;
+  percent: number;          // taxa EFETIVA (a que desconta de verdade)
+  taxaBase?: number | null; // decomposicao informativa: base + antecipacao D1 = efetiva
+  taxaD1?: number | null;
   fixedValue?: number;
   daysToReceive?: number;
   parcelasDe?: number | null;
   parcelasAte?: number | null;
+  ativo?: boolean;          // false = fora do calculo (ex.: VR/Alelo sem taxa informada)
 }
+// Cadastro do adquirente (banco de recebimento, numero logico, canais TEF/POS)
+export interface Adquirente {
+  nome: string;
+  banco: string;
+  numeroLogico?: string | null;
+  uso: Array<'tef' | 'pos'>;
+  ativo: boolean;
+}
+// Adquirente principal por modalidade (roteamento: debito->REDE, credito->CIELO...)
+export type Roteamento = Partial<Record<Modalidade, string>>;
 export interface CustoPorBandeira {
   acquirer: string; bandeira: string; modalidade: Modalidade;
   transacoes: number; bruto: number; percent: number | null; taxa: number; liquido: number;
