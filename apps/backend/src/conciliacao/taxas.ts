@@ -11,14 +11,18 @@ export interface RegraTaxa {
   acquirer: string;          // REDE | CIELO | SHIPAY ...
   bandeira: string | null;   // null = vale para qualquer bandeira do mesmo adquirente/modalidade
   modalidade: Modalidade;
-  percent: number;           // taxa efetiva ja somada (ex.: 1,65 + 1,24 de antecipacao = 2,89)
+  percent: number;           // taxa EFETIVA ja somada (ex.: 1,65 + 1,24 de antecipacao = 2,89)
+  taxaBase?: number | null;  // decomposicao informativa da efetiva (contrato da J.Kastros
+  taxaD1?: number | null;    //   separa taxa base + antecipacao D1; quem cobra e a efetiva)
   fixedValue?: number;       // custo fixo por transacao, se houver
   daysToReceive?: number;
   parcelasDe?: number | null; // faixa de parcelamento (null = a vista / qualquer)
   parcelasAte?: number | null;
+  ativo?: boolean;           // false = regra cadastrada mas fora do calculo (ex.: VR/Alelo sem taxa informada)
 }
 
-export type Modalidade = 'debito' | 'credito' | 'pix';
+// 'beneficio' = VR/Alelo/Sodexo (01/09: a J.Kastros aceita VR e Alelo pela Cielo)
+export type Modalidade = 'debito' | 'credito' | 'pix' | 'beneficio';
 
 export interface LinhaExtratoTaxa {
   acquirer: string;
@@ -41,6 +45,7 @@ export interface CustoLinha {
 export function modalidadeDaBandeira(bandeira: string, acquirer?: string): Modalidade {
   const b = (bandeira || '').toUpperCase();
   if (b.includes('PIX') || (acquirer || '').toUpperCase() === 'SHIPAY') return 'pix';
+  if (/\b(VR|ALELO|SODEXO|TICKET|PLUXEE|BEN VISA)\b/.test(b)) return 'beneficio';
   if (b.includes('DEB') || b.includes('ELECTRON') || b.includes('MAESTRO')) return 'debito';
   if (b.includes('CRED')) return 'credito';
   // Sem sufixo o extrato traz o credito puro ("MASTERCARD", "VISA", "AMEX") — o debito
@@ -71,6 +76,7 @@ export function escolherRegra(regras: RegraTaxa[], linha: LinhaExtratoTaxa, moda
   const band = canonica(bandeiraBase(linha.bandeira));
   const parc = linha.parcelas ?? 1;
   const serve = (r: RegraTaxa): boolean => {
+    if (r.ativo === false) return false;
     if (r.acquirer.toUpperCase() !== adq) return false;
     if (r.modalidade !== modalidade) return false;
     if (r.parcelasDe != null && parc < r.parcelasDe) return false;

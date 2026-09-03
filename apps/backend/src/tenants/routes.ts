@@ -46,16 +46,42 @@ const feeRuleSchema = z.object({
 const taxaAdquirenteSchema = z.object({
   acquirer: z.string().min(2).max(20),
   bandeira: z.string().max(30).nullable().optional(),
-  modalidade: z.enum(['debito', 'credito', 'pix']),
+  modalidade: z.enum(['debito', 'credito', 'pix', 'beneficio']),
   percent: z.number().min(0).max(100),
+  // Decomposicao informativa da taxa efetiva (contrato Cielo separa base + antecipacao D1);
+  // o calculo usa sempre `percent` (efetiva). Guardar os dois evita re-somar de cabeca.
+  taxaBase: z.number().min(0).max(100).nullable().optional(),
+  taxaD1: z.number().min(0).max(100).nullable().optional(),
   fixedValue: z.number().min(0).default(0),
   daysToReceive: z.number().int().min(0).max(180).default(1),
   parcelasDe: z.number().int().min(1).max(24).nullable().optional(),
   parcelasAte: z.number().int().min(1).max(24).nullable().optional(),
+  ativo: z.boolean().default(true),
+});
+
+// Cadastro do adquirente em si (dono 01/09): banco de recebimento, numero logico, canais.
+// TEF e POS usam as MESMAS regras/taxas — `uso` e informativo, nao duplica regra.
+const adquirenteSchema = z.object({
+  nome: z.string().min(2).max(20),
+  banco: z.string().max(40).default(''),
+  numeroLogico: z.string().max(30).nullable().optional(),
+  uso: z.array(z.enum(['tef', 'pos'])).default(['tef', 'pos']),
+  ativo: z.boolean().default(true),
+});
+
+// Adquirente PRINCIPAL por modalidade (roteamento do dono 01/09):
+// debito->REDE/Itau, credito->CIELO/Bradesco, pix->SHIPAY/Itau, beneficio->CIELO.
+const roteamentoSchema = z.object({
+  debito: z.string().max(20).optional(),
+  credito: z.string().max(20).optional(),
+  pix: z.string().max(20).optional(),
+  beneficio: z.string().max(20).optional(),
 });
 
 const settingsSchema = z.object({
   taxasAdquirente: z.array(taxaAdquirenteSchema).max(120).optional(),
+  adquirentes: z.array(adquirenteSchema).max(10).optional(),
+  roteamento: roteamentoSchema.optional(),
   monthlyGoal: z.number().nonnegative().optional(),
   commissionRules: z.array(z.object({ operator: z.string(), percent: z.number().min(0).max(100) })).optional(),
   feeRules: z.array(feeRuleSchema).max(60).optional(),
@@ -83,7 +109,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tenant/settings', { preHandler: [requireAuth] }, async (req) => {
     const tenant = await prisma.tenant.findUnique({ where: { id: req.user!.tenantId }, select: { meta: true } });
     const meta = (tenant?.meta ?? {}) as Record<string, unknown>;
-    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules, feeRules: meta.feeRules ?? [], taxasAdquirente: meta.taxasAdquirente ?? [] } };
+    return { settings: { monthlyGoal: meta.monthlyGoal, commissionRules: meta.commissionRules, feeRules: meta.feeRules ?? [], taxasAdquirente: meta.taxasAdquirente ?? [], adquirentes: meta.adquirentes ?? [], roteamento: meta.roteamento ?? {} } };
   });
 
   app.patch('/api/tenant/settings', { preHandler: [requireAuth, requireCapability('tenant.update'), audit({ action: 'tenant.settings.update', captureBody: true })] }, async (req) => {
@@ -95,7 +121,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
       data: { meta: meta as Prisma.InputJsonValue },
     });
     const updatedMeta = updated.meta as Record<string, unknown>;
-    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [], taxasAdquirente: updatedMeta.taxasAdquirente ?? [] } };
+    return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [], taxasAdquirente: updatedMeta.taxasAdquirente ?? [], adquirentes: updatedMeta.adquirentes ?? [], roteamento: updatedMeta.roteamento ?? {} } };
   });
 
   // ─── Integracoes de terceiro (27/08) ───────────────────────────────────────────────
