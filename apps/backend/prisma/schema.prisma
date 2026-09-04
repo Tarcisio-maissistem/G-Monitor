@@ -296,6 +296,7 @@ model Payment {
   store       Store    @relation(fields: [storeId], references: [id])
   saleId      String?
   sale        Sale?    @relation(fields: [saleId], references: [id])
+  saleSourceId String? // MOV_OPERADORES.ID_VENDA — permite religar quando a venda chega depois
   sourceId    String
   paymentDate DateTime
   paymentType String   // PIX, CARTAO, CREDIARIO, DINHEIRO, OUTROS
@@ -309,6 +310,7 @@ model Payment {
 
   @@unique([tenantId, storeId, sourceId])
   @@index([tenantId, storeId, paymentDate])
+  @@index([tenantId, storeId, saleSourceId])
   @@map("payments")
 }
 
