@@ -3,14 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { formatBRL, formatBrDate } from '../lib/masks';
 import { currentMonthRange, rangeQuery, type DateRange } from '../lib/period';
-import type { CashConferenceResponse, CashConferenceClosing } from '../lib/reports';
+import type { CashConferenceResponse, CashConferenceClosing, CashConferenceDia } from '../lib/reports';
 import { PageContainer, PageHeader, KpiRow, KpiCard, DateRangeFilter, DataQualityBanner, QueryState, Badge, CardList, CardRow, CardMeta } from '../components/ui';
 
 const ESP_LABEL: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', cartao: 'Cartão', crediario: 'Prazo/Crediário', outros: 'Outros' };
 
 // Conferencia de Caixa (D20, 26/08). Duas verdades, lado a lado, por fechamento (PDV + dia):
-//   ESPERADO = o que o GDOOR registrou no expediente (payments por forma + fundo de troco +
-//              suprimento - sangria) — verdade do SISTEMA, e o que vale pro faturamento.
+//   ESPERADO = o que o GDOOR registrou no expediente (payments por forma + fundo de troco
+//              − sangria) — verdade do SISTEMA, e o que vale pro faturamento. O suprimento NAO
+//              soma: ele E o proprio troco do fundo (conferido 25-29/08), somar contava 2x.
 //   CONTADO  = o que o operador contou ao fechar (FECHAMENTO_CAIXA_ESPECIES) — verdade FISICA.
 //   QUEBRA   = contado - esperado. Negativo = falta (vermelho). NUNCA altera o faturamento.
 export function ConferenciaCaixaPage(): JSX.Element {
@@ -22,6 +23,7 @@ export function ConferenciaCaixaPage(): JSX.Element {
   });
   const d = q.data;
   const rows = d?.closings ?? [];
+  const dias = d?.porDia ?? [];
   const tot = d?.totals;
   const quebraTone = (tot?.quebra ?? 0) < 0 ? 'red' : (tot?.quebra ?? 0) > 0 ? 'amber' : 'emerald';
 
@@ -33,10 +35,45 @@ export function ConferenciaCaixaPage(): JSX.Element {
 
       <QueryState query={q} empty={rows.length === 0 ? 'Nenhum fechamento de caixa sincronizado no período (precisa do agente v0.8 na loja).' : undefined}>
         <KpiRow cols={3}>
-          <KpiCard label="Esperado" info="O que o sistema registrou durante o expediente: vendas por forma de pagamento + fundo de troco + suprimentos − sangrias. É a verdade do GDOOR." value={formatBRL(tot?.esperado ?? 0)} compact sub="registrado no expediente" />
+          <KpiCard label="Esperado" info="O que o sistema registrou no expediente: vendas por forma de pagamento + fundo de troco − sangrias. O suprimento não soma: ele é o próprio troco do fundo, e contar os dois dobrava o valor." value={formatBRL(tot?.esperado ?? 0)} compact sub="registrado no expediente" />
           <KpiCard label="Contado" info="O que o operador informou ter contado na gaveta ao fechar o caixa (por forma de pagamento)." value={formatBRL(tot?.contado ?? 0)} compact sub="informado no fechamento" />
-          <KpiCard label="Quebra" info="Contado − Esperado. Negativo = faltou dinheiro (vermelho); positivo = sobrou. A quebra não muda o faturamento, só sinaliza o que conferir com o operador." value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.fechamentosComQuebra ?? 0} de ${rows.length} caixas com diferença`} />
+          <KpiCard label="Quebra" info="Contado − Esperado. Negativo = faltou dinheiro (vermelho); positivo = sobrou. A quebra não muda o faturamento, só sinaliza o que conferir com o operador." value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.diasComQuebra ?? 0} de ${dias.length} dias com diferença`} />
         </KpiRow>
+
+        {/* Fechamento do DIA: a sangria do GDOOR não diz de qual caixa saiu, então o número que
+            fecha de verdade é o do dia inteiro (soma dos caixas − sangrias). */}
+        {dias.length > 0 && (
+          <section className="bg-white rounded-xl shadow-sm border p-4">
+            <h3 className="font-semibold text-slate-700 mb-1">Fechamento por dia</h3>
+            <p className="text-xs text-slate-500 mb-3">Soma dos caixas do dia menos as sangrias — é aqui que a conta fecha quando há mais de um caixa.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[34rem]">
+                <thead>
+                  <tr className="text-[11px] uppercase text-slate-500 border-b">
+                    <th className="text-left pb-1">Dia</th>
+                    <th className="text-right pb-1">Caixas</th>
+                    <th className="text-right pb-1">Esperado</th>
+                    <th className="text-right pb-1">Sangrias</th>
+                    <th className="text-right pb-1">Contado</th>
+                    <th className="text-right pb-1">Quebra</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dias.map((dd: CashConferenceDia) => (
+                    <tr key={dd.dia} className="border-b border-slate-50">
+                      <td className="py-1.5">{formatBrDate(dd.dia)}</td>
+                      <td className="py-1.5 text-right text-slate-500">{dd.caixas}</td>
+                      <td className="py-1.5 text-right">{formatBRL(dd.esperado)}</td>
+                      <td className="py-1.5 text-right text-slate-500">{dd.sangrias > 0 ? `− ${formatBRL(dd.sangrias)}` : '—'}</td>
+                      <td className="py-1.5 text-right">{formatBRL(dd.contado)}</td>
+                      <td className="py-1.5 text-right font-semibold"><QuebraCell v={dd.quebra} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         <CardList<CashConferenceClosing>
           rows={rows}

@@ -226,10 +226,18 @@ export interface CashConferenceClosing {
   esperado: number; contado: number; quebra: number; // quebra = contado - esperado (negativo = falta)
   porForma: CashConferenceForma[];
 }
+// Fechamento do DIA: com 2 caixas a sangria nao diz de qual saiu, entao o dia e a unidade
+// que fecha (esperado = soma dos caixas − sangrias do dia). Dono 04/09.
+export interface CashConferenceDia {
+  dia: string; caixas: number; esperado: number; contado: number;
+  sangrias: number; suprimentos: number; quebra: number;
+}
 export interface CashConferenceResponse {
   closings: CashConferenceClosing[];
+  porDia: CashConferenceDia[];
   totals: { esperado: number; contado: number; quebra: number };
   fechamentosComQuebra: number;
+  diasComQuebra: number;
   avisos: string[];
   meta: FreshnessMeta;
 }
