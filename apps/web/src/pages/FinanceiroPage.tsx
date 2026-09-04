@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
 import { api } from '../lib/api';
+import { isoDate, currentMonthRange } from '../lib/period';
 
 interface FinancialData {
   revenue: number;
@@ -25,11 +26,9 @@ interface FinancialResponse {
 export function FinanceiroPage(): JSX.Element {
   const today = useMemo(() => new Date(), []);
   const defaultFrom = useMemo(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return currentMonthRange(today).from;
   }, [today]);
-  const defaultTo = useMemo(() => today.toISOString().slice(0, 10), [today]);
+  const defaultTo = useMemo(() => isoDate(today), [today]);
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);

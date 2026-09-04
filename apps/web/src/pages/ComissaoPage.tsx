@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { isoDate, currentMonthRange } from '../lib/period';
 import { useToast } from '../components/Toast';
 import { exportToCsv, todayStamp } from '../lib/exportCsv';
 import { MaskedInput } from '../components/MaskedInput';
@@ -38,11 +39,9 @@ interface SettingsResp {
 export function ComissaoPage(): JSX.Element {
   const today = useMemo(() => new Date(), []);
   const [from, setFrom] = useState(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return currentMonthRange(today).from;
   });
-  const [to, setTo] = useState(today.toISOString().slice(0, 10));
+  const [to, setTo] = useState(isoDate(today));
   const queryClient = useQueryClient();
   const toast = useToast();
 

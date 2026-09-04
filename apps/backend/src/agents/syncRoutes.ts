@@ -226,8 +226,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             operatorName: r.operatorName ? String(r.operatorName) : null,
             sellerName: r.sellerName ? String(r.sellerName) : null,
             caixa: r.caixa ? String(r.caixa) : null,
-            modelo: r.modelo ? String(r.modelo) : null,
-            natureza: r.natureza ? String(r.natureza) : null,
+            modelo: r.modelo ? String(r.modelo).trim() : null, // CHAR(8) do Firebird vem com espacos (auditoria 04/09)
+            natureza: r.natureza ? String(r.natureza).trim() : null,
             totalValue: Number(r.totalValue ?? 0),
             cancelled: Boolean(r.cancelled),
             processed: Boolean(r.processed ?? true),

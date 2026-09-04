@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { api } from '../lib/api';
+import { isoDate, currentMonthRange } from '../lib/period';
 
 type Tab = 'abc' | 'comparativo' | 'weekday' | 'margem' | 'operadores';
 
@@ -55,11 +56,9 @@ export function RelatoriosPage(): JSX.Element {
 function DateFilter({ children }: { children: (from: string, to: string) => JSX.Element }): JSX.Element {
   const today = useMemo(() => new Date(), []);
   const [from, setFrom] = useState(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return currentMonthRange(today).from;
   });
-  const [to, setTo] = useState(today.toISOString().slice(0, 10));
+  const [to, setTo] = useState(isoDate(today));
 
   return (
     <>

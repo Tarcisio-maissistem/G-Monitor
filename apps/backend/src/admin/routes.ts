@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Errors, ROLES } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
+import { marcarDadosNovos } from '../reports/routes.js';
 import { requireAuth, requireSuperAdmin } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
 import { signAccess } from '../auth/jwt.js';
@@ -64,6 +65,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       if (!tenant) throw Errors.notFound('Empresa nao encontrada');
       const meta = { ...((tenant.meta as Record<string, unknown>) ?? {}), monthlyGoal: body.monthlyGoal };
       await prisma.tenant.update({ where: { id: req.params.id }, data: { meta } });
+      await marcarDadosNovos(req.params.id); // invalida o cache do monthly-goal daquela empresa
       return { ok: true, monthlyGoal: body.monthlyGoal };
     },
   );

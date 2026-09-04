@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { isoDate, currentMonthRange } from '../lib/period';
 import { FinanceCalendar } from '../components/FinanceCalendar';
 import { copyToClipboard } from '../lib/clipboard';
 import { useToast } from '../components/Toast';
@@ -38,8 +39,8 @@ const STATUS_LABEL: Record<Payable['status'], string> = { pending: 'a pagar', pa
 export function ContasPagarPage(): JSX.Element {
   // Padrao: mes atual, do dia 1 ate hoje (nao "ultimos 30 dias" — pedido do dono 23/08).
   const today = useMemo(() => new Date(), []);
-  const defaultFrom = useMemo(() => new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)).toISOString().slice(0, 10), [today]);
-  const defaultTo = useMemo(() => today.toISOString().slice(0, 10), [today]);
+  const defaultFrom = useMemo(() => currentMonthRange(today).from, [today]);
+  const defaultTo = useMemo(() => isoDate(today), [today]);
 
   const [from, setFromRaw] = useState(defaultFrom);
   const [to, setToRaw] = useState(defaultTo);
