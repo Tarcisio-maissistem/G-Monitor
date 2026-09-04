@@ -1919,14 +1919,14 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
     // Esperado do DIA sem depender do vinculo pagamento->venda: a linha por caixa precisa do PDV
     // (que so existe na venda), mas o fechamento do dia nao. Enquanto 78% dos pagamentos estao
     // sem vinculo (auditoria 04/09), so este numero fecha. LEFT JOIN so pra excluir cancelada.
-    prisma.$queryRaw<{ day: Date; paymentType: string; total: unknown }[]>(Prisma.sql`
-      SELECT date_trunc('day', p."paymentDate") AS day, p."paymentType", SUM(p."value") AS total
+    prisma.$queryRaw<{ day: Date; paymentType: string; especie: string | null; total: unknown }[]>(Prisma.sql`
+      SELECT date_trunc('day', p."paymentDate") AS day, p."paymentType", p."especie", SUM(p."value") AS total
       FROM payments p LEFT JOIN sales s ON s.id = p."saleId"
       WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
         AND (p."kind" IS NULL OR p."kind" IN ('venda', 'recebimento'))
         AND (p."saleId" IS NULL OR s."cancelled" = false)
         AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
-      GROUP BY 1, 2`),
+      GROUP BY 1, 2, 3`),
     // Caixas do periodo AINDA ABERTOS (sem fechamento): a conferencia so olha caixa fechado, mas
     // o esperado do dia soma a venda da loja inteira — sem este aviso o dia aparece com falta
     // que e so caixa que nao fechou (visto no 28/08 da Casa de Carnes).
@@ -2003,9 +2003,9 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
 
   // FECHAMENTO POR DIA (dono 04/09): a loja tem 2 caixas e a sangria nao diz de qual saiu, entao
   // o DIA e a unidade que fecha de verdade. esperado(dia) = soma dos caixas − sangrias do dia.
-  const dias = new Map<string, { dia: string; caixas: number; esperado: number; contado: number; sangrias: number; suprimentos: number; quebra: number; outrasFormas: number; caixaAberto: boolean }>();
+  const dias = new Map<string, { dia: string; caixas: number; esperado: number; contado: number; sangrias: number; suprimentos: number; quebra: number; outrasFormas: number; dinheiroRetaguarda: number; caixaAberto: boolean }>();
   for (const c of out) {
-    const d = dias.get(c.dia) ?? { dia: c.dia, caixas: 0, esperado: 0, contado: 0, sangrias: 0, suprimentos: 0, quebra: 0, outrasFormas: 0, caixaAberto: false };
+    const d = dias.get(c.dia) ?? { dia: c.dia, caixas: 0, esperado: 0, contado: 0, sangrias: 0, suprimentos: 0, quebra: 0, outrasFormas: 0, dinheiroRetaguarda: 0, caixaAberto: false };
     d.caixas++; d.esperado += c.esperado; d.contado += c.contado;
     dias.set(c.dia, d);
   }
@@ -2015,12 +2015,24 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
   // (tela Conciliacao). Misturar tudo criava uma "quebra" de centenas de milhares que era so
   // forma nao contada. Aqui: dinheiro do dia (todos os pagamentos, com ou sem vinculo a venda,
   // entao independe do relink) + troco dos caixas − sangrias, contra o dinheiro contado.
+  // DINHEIRO DO PDV x DA RETAGUARDA (dono 04/09): e a MESMA forma de pagamento, mas o GDOOR
+  // grava a especie em CAIXA ALTA quando o recebimento e no PDV ('DINHEIRO') e capitalizada
+  // quando e na retaguarda/escritorio ('Dinheiro'). So o do PDV passa pela gaveta — o da
+  // retaguarda (37 lancamentos em agosto, R$ 103 mil, um de R$ 15 mil, contra maximo de R$ 900
+  // no PDV) inflava o esperado das segundas-feiras. Agora ele aparece em coluna propria.
+  const ehDinheiroDePdv = (especie: string | null, paymentType: string): boolean => {
+    const forma = normalizePaymentType(especie ?? paymentType) ?? 'outros';
+    if (forma !== 'dinheiro') return false;
+    const bruto = (especie ?? '').trim();
+    return bruto === '' ? true : bruto === bruto.toUpperCase(); // capitalizada = retaguarda
+  };
   const dinheiroPorDia = new Map<string, number>();
+  const retaguardaPorDia = new Map<string, number>();
   const outrasPorDia = new Map<string, number>();
   for (const r of diaRows) {
     const k = dayKey(r.day);
-    const forma = normalizePaymentType(r.paymentType) ?? 'outros';
-    const alvo = forma === 'dinheiro' ? dinheiroPorDia : outrasPorDia;
+    const forma = normalizePaymentType(r.especie ?? r.paymentType) ?? 'outros';
+    const alvo = forma !== 'dinheiro' ? outrasPorDia : ehDinheiroDePdv(r.especie, r.paymentType) ? dinheiroPorDia : retaguardaPorDia;
     alvo.set(k, (alvo.get(k) ?? 0) + Number(r.total));
   }
   const fundosPorDia = new Map<string, number>();
@@ -2041,6 +2053,7 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
     d.contado = r2(contadoDinheiroPorDia.get(d.dia) ?? 0);
     d.quebra = r2(d.contado - d.esperado);
     d.outrasFormas = r2(outrasPorDia.get(d.dia) ?? 0);
+    d.dinheiroRetaguarda = r2(retaguardaPorDia.get(d.dia) ?? 0);
   }
   const abertosPorDia = new Map<string, string[]>();
   for (const a of abertos) {

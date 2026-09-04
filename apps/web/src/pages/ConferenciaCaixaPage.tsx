@@ -45,7 +45,7 @@ export function ConferenciaCaixaPage(): JSX.Element {
         {dias.length > 0 && (
           <section className="bg-white rounded-xl shadow-sm border p-4">
             <h3 className="font-semibold text-slate-700 mb-1">Fechamento por dia</h3>
-            <p className="text-xs text-slate-500 mb-3">Só dinheiro: vendas em dinheiro + troco dos caixas − sangrias, contra o que foi contado na gaveta. Cartão e PIX aparecem à direita só como referência (confere-se no extrato).</p>
+            <p className="text-xs text-slate-500 mb-3">Só dinheiro: vendas em dinheiro + troco dos caixas − sangrias, contra o que foi contado na gaveta. Cartão, PIX e o dinheiro recebido na retaguarda aparecem à direita só como referência: não passam pela gaveta do PDV.</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[34rem]">
                 <thead>
@@ -56,6 +56,7 @@ export function ConferenciaCaixaPage(): JSX.Element {
                     <th className="text-right pb-1">Sangrias</th>
                     <th className="text-right pb-1">Dinheiro contado</th>
                     <th className="text-right pb-1">Quebra</th>
+                    <th className="text-right pb-1">Dinheiro retaguarda</th>
                     <th className="text-right pb-1">Cartão/PIX</th>
                   </tr>
                 </thead>
@@ -71,6 +72,7 @@ export function ConferenciaCaixaPage(): JSX.Element {
                       <td className="py-1.5 text-right text-slate-500">{dd.sangrias > 0 ? `− ${formatBRL(dd.sangrias)}` : '—'}</td>
                       <td className="py-1.5 text-right">{formatBRL(dd.contado)}</td>
                       <td className="py-1.5 text-right font-semibold"><QuebraCell v={dd.quebra} /></td>
+                      <td className="py-1.5 text-right text-slate-400">{dd.dinheiroRetaguarda > 0 ? formatBRL(dd.dinheiroRetaguarda) : '—'}</td>
                       <td className="py-1.5 text-right text-slate-400">{formatBRL(dd.outrasFormas)}</td>
                     </tr>
                   ))}
