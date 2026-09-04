@@ -29,15 +29,15 @@ export function ConferenciaCaixaPage(): JSX.Element {
 
   return (
     <PageContainer>
-      <PageHeader title="Conferência de Caixa" subtitle="Esperado pelo sistema × contado pelo operador, por caixa e dia. A quebra nunca mexe no faturamento." />
+      <PageHeader title="Conferência de Caixa" subtitle="Dinheiro esperado × dinheiro contado na gaveta, por dia. Cartão e PIX se conferem no extrato, não na gaveta. A quebra nunca mexe no faturamento." />
       <DateRangeFilter value={range} onChange={setRange} />
       <DataQualityBanner meta={d?.meta} items={d?.avisos?.map((a) => ({ label: a, kind: 'info' as const }))} />
 
       <QueryState query={q} empty={rows.length === 0 ? 'Nenhum fechamento de caixa sincronizado no período (precisa do agente v0.8 na loja).' : undefined}>
         <KpiRow cols={3}>
-          <KpiCard label="Esperado" info="O que o sistema registrou no expediente: vendas por forma de pagamento + fundo de troco − sangrias. O suprimento não soma: ele é o próprio troco do fundo, e contar os dois dobrava o valor." value={formatBRL(tot?.esperado ?? 0)} compact sub="registrado no expediente" />
-          <KpiCard label="Contado" info="O que o operador informou ter contado na gaveta ao fechar o caixa (por forma de pagamento)." value={formatBRL(tot?.contado ?? 0)} compact sub="informado no fechamento" />
-          <KpiCard label="Quebra" info="Contado − Esperado. Negativo = faltou dinheiro (vermelho); positivo = sobrou. A quebra não muda o faturamento, só sinaliza o que conferir com o operador." value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.diasComQuebra ?? 0} de ${dias.length} dias com diferença`} />
+          <KpiCard label="Dinheiro esperado" info="Vendas em dinheiro do dia + fundo de troco − sangrias. O suprimento não soma: ele é o próprio troco do fundo, e contar os dois dobrava o valor. Cartão e PIX ficam fora: não se contam na gaveta." value={formatBRL(tot?.esperado ?? 0)} compact sub="dinheiro registrado" />
+          <KpiCard label="Dinheiro contado" info="O que o operador informou ter contado em dinheiro ao fechar o caixa, incluindo o troco que ficou na gaveta." value={formatBRL(tot?.contado ?? 0)} compact sub="contado na gaveta" />
+          <KpiCard label="Quebra" info="Dinheiro contado − dinheiro esperado. Negativo = faltou (vermelho); positivo = sobrou. Só dinheiro entra aqui: cartão e PIX se conferem pelo extrato da maquininha. A quebra não muda o faturamento." value={formatBRL(tot?.quebra ?? 0)} tone={quebraTone} compact highlight sub={`${d?.diasComQuebra ?? 0} de ${dias.length} dias com diferença`} />
         </KpiRow>
 
         {/* Fechamento do DIA: a sangria do GDOOR não diz de qual caixa saiu, então o número que
@@ -45,28 +45,33 @@ export function ConferenciaCaixaPage(): JSX.Element {
         {dias.length > 0 && (
           <section className="bg-white rounded-xl shadow-sm border p-4">
             <h3 className="font-semibold text-slate-700 mb-1">Fechamento por dia</h3>
-            <p className="text-xs text-slate-500 mb-3">Soma dos caixas do dia menos as sangrias — é aqui que a conta fecha quando há mais de um caixa.</p>
+            <p className="text-xs text-slate-500 mb-3">Só dinheiro: vendas em dinheiro + troco dos caixas − sangrias, contra o que foi contado na gaveta. Cartão e PIX aparecem à direita só como referência (confere-se no extrato).</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[34rem]">
                 <thead>
                   <tr className="text-[11px] uppercase text-slate-500 border-b">
                     <th className="text-left pb-1">Dia</th>
                     <th className="text-right pb-1">Caixas</th>
-                    <th className="text-right pb-1">Esperado</th>
+                    <th className="text-right pb-1">Dinheiro esperado</th>
                     <th className="text-right pb-1">Sangrias</th>
-                    <th className="text-right pb-1">Contado</th>
+                    <th className="text-right pb-1">Dinheiro contado</th>
                     <th className="text-right pb-1">Quebra</th>
+                    <th className="text-right pb-1">Cartão/PIX</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dias.map((dd: CashConferenceDia) => (
                     <tr key={dd.dia} className="border-b border-slate-50">
-                      <td className="py-1.5">{formatBrDate(dd.dia)}</td>
+                      <td className="py-1.5">
+                        {formatBrDate(dd.dia)}
+                        {dd.caixaAberto && <span className="ml-1 text-amber-600" title="Um caixa do dia não foi fechado — a falta está exagerada">⚠</span>}
+                      </td>
                       <td className="py-1.5 text-right text-slate-500">{dd.caixas}</td>
                       <td className="py-1.5 text-right">{formatBRL(dd.esperado)}</td>
                       <td className="py-1.5 text-right text-slate-500">{dd.sangrias > 0 ? `− ${formatBRL(dd.sangrias)}` : '—'}</td>
                       <td className="py-1.5 text-right">{formatBRL(dd.contado)}</td>
                       <td className="py-1.5 text-right font-semibold"><QuebraCell v={dd.quebra} /></td>
+                      <td className="py-1.5 text-right text-slate-400">{formatBRL(dd.outrasFormas)}</td>
                     </tr>
                   ))}
                 </tbody>
