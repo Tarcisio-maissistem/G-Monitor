@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useAuthStore } from './stores/authStore';
+import { useAuthStore, tenantLembrado, lembrarTenant } from './stores/authStore';
 import { useRoute, matchRoute } from './lib/router';
-import { refreshSession } from './lib/api';
+import { refreshSession, switchTenant, switchMyTenant } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { EmpresaSelectPage } from './pages/EmpresaSelectPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -49,12 +49,27 @@ export function App(): JSX.Element {
   // localStorage — evita expor o JWT a XSS); o cookie httpOnly e que sobrevive ao F5.
   useEffect(() => {
     let cancelled = false;
-    refreshSession().then((res) => {
+    void (async () => {
+      const res = await refreshSession();
       if (cancelled) return;
       // restoreSession (nao login): F5 nao dispara a tela de selecao de estabelecimento
-      if (res) restoreSession(res.accessToken, res.user, res.tenant.id, res.tenant.name);
-      setBootstrapping(false);
-    });
+      if (res) {
+        restoreSession(res.accessToken, res.user, res.tenant.id, res.tenant.name);
+        // O token do refresh sempre volta na empresa de CADASTRO do usuario. Se ele estava
+        // olhando outra, reaplica a troca antes de pintar a tela (achado do dono 04/09) —
+        // o servidor revalida o acesso; se perdeu o acesso, esquece e fica na propria.
+        const lembrado = tenantLembrado();
+        if (lembrado && lembrado !== res.tenant.id) {
+          try {
+            const alvo = res.user.isSuperAdmin ? await switchTenant(lembrado) : await switchMyTenant(lembrado);
+            if (!cancelled) useAuthStore.getState().switchTenant(alvo.token, alvo.tenant.id, alvo.tenant.name);
+          } catch {
+            lembrarTenant(null);
+          }
+        }
+      }
+      if (!cancelled) setBootstrapping(false);
+    })();
     return () => {
       cancelled = true;
     };
