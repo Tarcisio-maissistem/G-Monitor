@@ -1,6 +1,21 @@
 import { create } from 'zustand';
 import { setAccessToken, api } from '../lib/api';
 
+// Empresa escolhida no seletor: o F5 troca o cookie de refresh por um token novo, e esse token
+// SEMPRE vem com a empresa de cadastro do usuario — quem estava olhando a Ferragista voltava
+// pra Casa de Carnes a cada atualizacao (achado do dono 04/09). Guardamos so o ID aqui; o
+// servidor revalida o acesso no switch, entao isto e conveniencia, nunca permissao.
+const CHAVE_LOJA = 'gmonitor:tenantAtivo';
+export function lembrarTenant(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(CHAVE_LOJA, id);
+    else localStorage.removeItem(CHAVE_LOJA);
+  } catch { /* modo privado/sem storage: segue sem lembrar */ }
+}
+export function tenantLembrado(): string | null {
+  try { return localStorage.getItem(CHAVE_LOJA); } catch { return null; }
+}
+
 interface AuthState {
   user: { id: string; name: string; email: string; role: string; isSuperAdmin?: boolean } | null;
   token: string | null;
@@ -38,6 +53,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   switchTenant(token, tenantId, tenantName) {
     setAccessToken(token);
+    lembrarTenant(tenantId); // sobrevive ao F5
     set({ token, activeTenantId: tenantId, activeTenantName: tenantName, promptStorePick: false });
   },
   clearStorePick() {
@@ -49,6 +65,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     // auto-login ao recarregar a pagina (refreshSession) logava de volta sozinho.
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setAccessToken(null);
+    lembrarTenant(null);
     set({ token: null, user: null, activeTenantId: null, activeTenantName: null, promptStorePick: false });
   },
 }));
