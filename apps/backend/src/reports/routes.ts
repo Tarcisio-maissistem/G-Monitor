@@ -17,7 +17,13 @@ import { open, isSealed } from '../lib/secretBox.js';
 // NF-e 55. A NFC-e 65 e gerada A PARTIR do PV e nao tem pagamento proprio — somar os dois
 // dobrava a receita. Toda query de venda usa este filtro; NFC-e direta (sem PV, tem pagamento
 // proprio) e anomalia exposta a parte em /dashboard/today (nfceSemPv).
-const SALE_OF_RECORD = { cancelled: false as const, modelo: { not: '65' } };
+// AUDITORIA 04/09: o GDOOR manda MODELO como CHAR(8) com espacos ("65      ") e o filtro
+// `modelo != '65'` NUNCA casava — a NFC-e entrava 2x e inflava a receita em ~17% (agosto da
+// Casa de Carnes: R$ 264 mil a mais). Filtro por prefixo + trim no ingest (syncRoutes).
+const SALE_OF_RECORD = { cancelled: false as const, NOT: { modelo: { startsWith: '65' } } };
+// Entradas de caixa de verdade: venda/recebimento (kind null = agente antigo). Sangria,
+// suprimento e outros movimentos NAO sao receita — auditoria 04/09 achou 5 telas somando tudo.
+const ENTRADA_DE_CAIXA = { OR: [{ kind: null }, { kind: { in: ['venda', 'recebimento'] } }] };
 
 
 // Cache curto (cache-aside) pros relatorios: cada request bate no Supabase (~180ms de RTT
@@ -315,6 +321,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
           tenantId: req.user!.tenantId,
           paymentDate: { gte: from, lte: to },
           ...(storeId ? { storeId } : {}),
+          ...ENTRADA_DE_CAIXA,
         },
         _sum: { value: true },
         _count: true,
@@ -357,7 +364,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const [groups, meta] = await Promise.all([
       prisma.payment.groupBy({
         by: ['paymentType'],
-        where: { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) },
+        where: { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}), ...ENTRADA_DE_CAIXA },
         _sum: { value: true },
         _count: true,
         orderBy: { _sum: { value: 'desc' } },
@@ -399,7 +406,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       saleDate: { gte: from, lte: to },
       ...(storeId ? { storeId } : {}),
       ...(query.status ? { cancelled: query.status === 'cancelada' } : {}),
-      ...(query.modelo ? { modelo: query.modelo } : {}),
+      ...(query.modelo ? { modelo: { startsWith: query.modelo } } : {}),
       ...(query.search ? { sourceId: { contains: query.search } } : {}),
     };
 
@@ -426,7 +433,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         id: r.id,
         sourceId: r.sourceId,
         saleDate: r.saleDate,
-        modelo: r.modelo,
+        modelo: r.modelo?.trim() ?? null,
         operatorName: r.operatorName,
         caixa: r.caixa,
         natureza: r.natureza,
@@ -593,12 +600,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         storeId
           ? Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
               FROM sales
-              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65') AND "storeId" = ${storeId}
+              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65') AND "storeId" = ${storeId}
                 AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
               GROUP BY 1`
           : Prisma.sql`SELECT date_trunc(${truncUnit}, "saleDate") AS bucket, SUM("totalValue") AS total
               FROM sales
-              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')
+              WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')
                 AND "saleDate" >= ${rangeFrom} AND "saleDate" <= ${rangeTo}
               GROUP BY 1`,
       ),
@@ -640,7 +647,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       prisma.sale.aggregate({ where: { ...baseWhere, saleDate: { gte: from, lte: to }, ...SALE_OF_RECORD, processed: false }, _sum: { totalValue: true }, _count: true }),
       prisma.payment.groupBy({
         by: ['paymentType'],
-        where: { ...baseWhere, paymentDate: { gte: from, lte: to } },
+        where: { ...baseWhere, paymentDate: { gte: from, lte: to }, ...ENTRADA_DE_CAIXA },
         _sum: { value: true },
         _count: true,
         orderBy: { _sum: { value: 'desc' } },
@@ -655,7 +662,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         JOIN sales s ON s.id = i."saleId"
         LEFT JOIN products p ON p."tenantId" = i."tenantId" AND p."storeId" = i."storeId" AND p."sourceCode" = i."productCode"
         WHERE i."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND i."storeId" = ${storeId}` : Prisma.empty}
-          AND s."cancelled" = false AND (s."modelo" IS NULL OR s."modelo" <> '65') AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`),
+          AND s."cancelled" = false AND (s."modelo" IS NULL OR s.trim("modelo") <> '65') AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`),
       prisma.payable.groupBy({
         by: ['counterparty'],
         where: query.regime === 'caixa'
@@ -681,7 +688,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const receitaPorModelo: Record<string, number> = {};
     for (const g of naturezas) {
       if (!isVenda(g.natureza)) continue;
-      const m = g.modelo ?? '?';
+      const m = (g.modelo ?? '?').trim();
       receitaPorModelo[m] = (receitaPorModelo[m] ?? 0) + Number(g._sum.totalValue ?? 0);
     }
     const despesas = query.regime === 'caixa' ? Number(despesasAgg._sum.paidValue ?? 0) : Number(despesasAgg._sum.value ?? 0);
@@ -697,7 +704,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const despesaNote = query.regime === 'caixa' ? 'so contas a pagar baixadas no periodo (sangria/despesa de caixa nao sincronizam)' : 'contas a pagar por vencimento no periodo (nao e competencia: sem data de emissao)';
 
     const lines = [
-      { key: 'receita_bruta', label: 'Receita bruta', value: receitaBruta, pct: pct(receitaBruta), status: 'real', note: 'vendas nao canceladas (PV, NFC-e e NF-e)' },
+      { key: 'receita_bruta', label: 'Receita bruta', value: receitaBruta, pct: pct(receitaBruta), status: 'real', note: 'vendas nao canceladas (PV e NF-e; NFC-e gerada do PV nao conta 2x)' },
       { key: 'descontos', label: '(-) Descontos', value: null, pct: null, status: 'nd', note: 'nao sincronizado' },
       { key: 'devolucoes', label: '(-) Devolucoes', value: null, pct: null, status: 'nd', note: 'nao mapeado' },
       { key: 'receita_liquida', label: '= Receita liquida', value: receitaLiquida, pct: pct(receitaLiquida), status: 'estimate', note: 'igual a bruta (descontos/devolucoes N/D)' },
@@ -715,7 +722,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       memo: {
         cancelamentos: { value: Number(cancelled._sum.totalValue ?? 0), count: cancelled._count },
         naoProcessadas: { value: Number(naoProc._sum.totalValue ?? 0), count: naoProc._count },
-        naturezas: naturezas.map((g) => ({ natureza: g.natureza, modelo: g.modelo, count: g._count, value: Number(g._sum.totalValue ?? 0) })),
+        naturezas: naturezas.map((g) => ({ natureza: g.natureza, modelo: g.modelo?.trim() ?? null, count: g._count, value: Number(g._sum.totalValue ?? 0) })),
         cmvCoverage,
         receitaPorModelo,
       },
@@ -936,7 +943,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     const [salesAgg, paymentGroups, receivablesAgg, receivablesCount, meta] = await Promise.all([
       prisma.sale.aggregate({ where: { ...scope, ...SALE_OF_RECORD, saleDate: { gte: from, lte: to } }, _sum: { totalValue: true }, _count: true }),
-      prisma.payment.groupBy({ by: ['paymentType'], where: { ...scope, paymentDate: { gte: from, lte: to } }, _sum: { value: true } }),
+      prisma.payment.groupBy({ by: ['paymentType'], where: { ...scope, paymentDate: { gte: from, lte: to }, ...ENTRADA_DE_CAIXA }, _sum: { value: true } }),
       prisma.receivable.aggregate({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } }, _sum: { value: true, receivedValue: true } }),
       prisma.receivable.count({ where: { ...scope, cancelled: false, dueDate: { gte: from, lte: to } } }),
       getFreshnessMeta(req.user!.tenantId, storeId),
@@ -1072,19 +1079,19 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const [saleRows, paymentRows, meta] = await Promise.all([
       prisma.$queryRaw<{ day: Date; qtd: bigint; canceladas: bigint; total: unknown }[]>(
         storeId
-          ? Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')) AS qtd,
-                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')), 0) AS total
+          ? Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')) AS qtd,
+                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')), 0) AS total
               FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`
-          : Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')) AS qtd,
-                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')), 0) AS total
+          : Prisma.sql`SELECT date_trunc('day', "saleDate") AS day, COUNT(*) FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')) AS qtd,
+                COUNT(*) FILTER (WHERE "cancelled" = true) AS canceladas, COALESCE(SUM("totalValue") FILTER (WHERE "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')), 0) AS total
               FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`,
       ),
       prisma.$queryRaw<{ day: Date; paymentType: string; total: unknown }[]>(
         storeId
           ? Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, "paymentType", SUM("value") AS total
-              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`
+              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND ("kind" IS NULL OR "kind" IN ('venda', 'recebimento')) AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`
           : Prisma.sql`SELECT date_trunc('day', "paymentDate") AS day, "paymentType", SUM("value") AS total
-              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`,
+              FROM payments WHERE "tenantId" = ${req.user!.tenantId} AND ("kind" IS NULL OR "kind" IN ('venda', 'recebimento')) AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`,
       ),
       getFreshnessMeta(req.user!.tenantId, storeId),
     ]);
@@ -1127,24 +1134,28 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const storeId = resolveStoreScope(req, query.storeId);
     const where = { tenantId: req.user!.tenantId, paymentDate: { gte: from, lte: to }, ...(storeId ? { storeId } : {}) };
 
-    const [rows, total, agg] = await Promise.all([
+    // Auditoria 04/09: saida era 0 fixo e entrada somava sangria junto. Agora o kind decide
+    // o lado: sangria/outro = saida; venda/recebimento/suprimento (e null = agente antigo) = entrada.
+    const ehSaida = (kind: string | null): boolean => kind === 'sangria' || kind === 'outro';
+    const [rows, total, porKind] = await Promise.all([
       prisma.payment.findMany({ where, orderBy: { paymentDate: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
       prisma.payment.count({ where }),
-      prisma.payment.aggregate({ where, _sum: { value: true } }),
+      prisma.payment.groupBy({ by: ['kind'], where, _sum: { value: true } }),
     ]);
 
-    const entrada = Number(agg._sum.value ?? 0);
+    let entrada = 0; let saida = 0;
+    for (const g of porKind) { const v = Number(g._sum.value ?? 0); if (ehSaida(g.kind)) saida += v; else entrada += v; }
     return {
       data: rows.map((r) => ({
         id: r.id,
         sourceId: r.sourceId,
         movementDate: r.paymentDate,
-        entrada: Number(r.value),
-        saida: 0,
-        historico: r.paymentType,
+        entrada: ehSaida(r.kind) ? 0 : Number(r.value),
+        saida: ehSaida(r.kind) ? Number(r.value) : 0,
+        historico: r.kind === 'sangria' || r.kind === 'suprimento' ? `${r.kind.toUpperCase()} · ${r.paymentType}` : r.paymentType,
       })),
       pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
-      summary: { entrada, saida: 0, saldo: entrada },
+      summary: { entrada, saida, saldo: entrada - saida },
     };
   }));
 
@@ -1209,8 +1220,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
     const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
-    const prevTo = new Date(from.getTime() - 1);
-    const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86_400_000);
+    const prevTo = new Date(from.getTime() - 1); // 23:59:59.999 do dia anterior
+    const prevFrom = new Date(Date.UTC(prevTo.getUTCFullYear(), prevTo.getUTCMonth(), prevTo.getUTCDate() - (days - 1))); // 00:00 (era -1 dia por conta dos ms)
     const scopedWhere = (f: Date, t: Date) => ({ tenantId: req.user!.tenantId, ...SALE_OF_RECORD, saleDate: { gte: f, lte: t }, ...(storeId ? { storeId } : {}) });
 
     const [curAgg, prevAgg] = await Promise.all([
@@ -1240,9 +1251,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const rows = await prisma.$queryRaw<{ dow: number; total: unknown; qtd: bigint }[]>(
       storeId
         ? Prisma.sql`SELECT EXTRACT(DOW FROM "saleDate")::int AS dow, SUM("totalValue") AS total, COUNT(*) AS qtd
-            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65') AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`
+            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65') AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`
         : Prisma.sql`SELECT EXTRACT(DOW FROM "saleDate")::int AS dow, SUM("totalValue") AS total, COUNT(*) AS qtd
-            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65') AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`,
+            FROM sales WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65') AND "saleDate" >= ${from} AND "saleDate" <= ${to} GROUP BY 1`,
     );
 
     // Conta quantos de cada dia-da-semana existem no periodo (independente de ter venda),
@@ -1329,7 +1340,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       SELECT COUNT(DISTINCT s.id) AS n, COALESCE(SUM(DISTINCT s."totalValue"), 0) AS total
       FROM sales s JOIN payments p ON p."saleId" = s.id
       WHERE s."tenantId" = ${req.user!.tenantId} ${storeId ? Prisma.sql`AND s."storeId" = ${storeId}` : Prisma.empty}
-        AND s."modelo" = '65' AND s."cancelled" = false AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`);
+        AND trim(s."modelo") = '65' AND s."cancelled" = false AND s."saleDate" >= ${from} AND s."saleDate" <= ${to}`);
     // Cards da onda 1 (26/08, copiados do Gdoor Relatorios antigo): hoje x ontem sao dias de
     // CALENDARIO (nao dependem do filtro), dias trabalhados = dias distintos com venda no periodo.
     const hojeIni = new Date(); hojeIni.setUTCHours(0, 0, 0, 0);
@@ -1409,9 +1420,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const rows = await prisma.$queryRaw<{ h: number; qtd: bigint; total: unknown }[]>(
       storeId
         ? Prisma.sql`SELECT "saleHour" AS h, COUNT(*) AS qtd, SUM("totalValue") AS total FROM sales
-            WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65') AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`
+            WHERE "tenantId" = ${req.user!.tenantId} AND "storeId" = ${storeId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65') AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`
         : Prisma.sql`SELECT "saleHour" AS h, COUNT(*) AS qtd, SUM("totalValue") AS total FROM sales
-            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65') AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`,
+            WHERE "tenantId" = ${req.user!.tenantId} AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65') AND "saleHour" IS NOT NULL AND "saleDate" >= ${since} GROUP BY 1`,
     );
     const byHour = new Map(rows.map((r) => [Number(r.h), r]));
     // preenche 0-23 (horas sem venda viram 0) pro grafico ter o dia inteiro; corta as pontas
@@ -1433,8 +1444,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = defaultPeriod(query.from, query.to);
     const storeId = resolveStoreScope(req, query.storeId);
     const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
-    const prevTo = new Date(from.getTime() - 1);
-    const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86_400_000);
+    const prevTo = new Date(from.getTime() - 1); // 23:59:59.999 do dia anterior
+    const prevFrom = new Date(Date.UTC(prevTo.getUTCFullYear(), prevTo.getUTCMonth(), prevTo.getUTCDate() - (days - 1))); // 00:00 (era -1 dia por conta dos ms)
     const scopeSql = storeId ? Prisma.sql`AND "storeId" = ${storeId}` : Prisma.empty;
 
     const rows = await prisma.$queryRaw<{ seller: string; vendas: bigint; total: unknown; total_ant: unknown; total_geral: unknown }[]>(Prisma.sql`
@@ -1445,7 +1456,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
                COALESCE(SUM("totalValue") FILTER (WHERE "saleDate" < ${from}), 0) AS total_ant
         FROM sales
         WHERE "tenantId" = ${req.user!.tenantId} ${scopeSql}
-          AND "cancelled" = false AND ("modelo" IS NULL OR "modelo" <> '65')
+          AND "cancelled" = false AND ("modelo" IS NULL OR trim("modelo") <> '65')
           AND "sellerName" IS NOT NULL AND TRIM("sellerName") <> ''
           AND "saleDate" >= ${prevFrom} AND "saleDate" <= ${to}
         GROUP BY 1

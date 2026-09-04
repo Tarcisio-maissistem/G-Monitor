@@ -11,6 +11,7 @@ import {
   Legend,
 } from 'recharts';
 import { api } from '../lib/api';
+import { isoDate, currentMonthRange } from '../lib/period';
 import { exportToCsv, todayStamp } from '../lib/exportCsv';
 
 interface CashRow {
@@ -34,11 +35,9 @@ interface CashResp {
 export function CaixaDetalhadoPage(): JSX.Element {
   const today = useMemo(() => new Date(), []);
   const [from, setFrom] = useState(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return currentMonthRange(today).from;
   });
-  const [to, setTo] = useState(today.toISOString().slice(0, 10));
+  const [to, setTo] = useState(isoDate(today));
 
   const r = useQuery({
     queryKey: ['cash-detailed', from, to],

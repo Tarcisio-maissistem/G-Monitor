@@ -34,7 +34,6 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 // Vendas/Produtos/Clientes/Pagamentos saíram daqui em 24/08; as outras 9 em 25/08 —
 // endpoints implementados. So DAV continua aqui (sem model no schema, sem sync do agente).
 const COMING_SOON: Record<string, string> = {
-  '/dav': 'DAV (Pré-vendas)',
 };
 
 export function App(): JSX.Element {
