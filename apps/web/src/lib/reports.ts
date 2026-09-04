@@ -229,8 +229,11 @@ export interface CashConferenceClosing {
 // Fechamento do DIA: com 2 caixas a sangria nao diz de qual saiu, entao o dia e a unidade
 // que fecha (esperado = soma dos caixas − sangrias do dia). Dono 04/09.
 export interface CashConferenceDia {
-  dia: string; caixas: number; esperado: number; contado: number;
-  sangrias: number; suprimentos: number; quebra: number;
+  dia: string; caixas: number;
+  esperado: number; contado: number; quebra: number; // SO dinheiro: e o unico que se conta na gaveta
+  sangrias: number; suprimentos: number;
+  outrasFormas: number; // cartao/PIX/prazo do dia — conferidos pelo extrato, nao pela gaveta
+  caixaAberto: boolean; // algum caixa do dia nao foi fechado: a falta do dia esta exagerada
 }
 export interface CashConferenceResponse {
   closings: CashConferenceClosing[];

@@ -1894,7 +1894,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 async function buildCashConference(tenantId: string, storeId: string | null, from: Date, to: Date) {
   const scope = { tenantId, ...(storeId ? { storeId } : {}) };
 
-    const [closings, payRows, movRows, meta] = await Promise.all([
+    const [closings, payRows, movRows, diaRows, abertos, meta] = await Promise.all([
     prisma.cashClosing.findMany({
       where: { ...scope, closedAt: { not: null }, openedAt: { gte: from, lte: to } },
       include: { species: true },
@@ -1916,6 +1916,25 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
       WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
         AND p."kind" IN ('sangria', 'suprimento') AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
       GROUP BY 1, 2`),
+    // Esperado do DIA sem depender do vinculo pagamento->venda: a linha por caixa precisa do PDV
+    // (que so existe na venda), mas o fechamento do dia nao. Enquanto 78% dos pagamentos estao
+    // sem vinculo (auditoria 04/09), so este numero fecha. LEFT JOIN so pra excluir cancelada.
+    prisma.$queryRaw<{ day: Date; paymentType: string; total: unknown }[]>(Prisma.sql`
+      SELECT date_trunc('day', p."paymentDate") AS day, p."paymentType", SUM(p."value") AS total
+      FROM payments p LEFT JOIN sales s ON s.id = p."saleId"
+      WHERE p."tenantId" = ${tenantId} ${storeId ? Prisma.sql`AND p."storeId" = ${storeId}` : Prisma.empty}
+        AND (p."kind" IS NULL OR p."kind" IN ('venda', 'recebimento'))
+        AND (p."saleId" IS NULL OR s."cancelled" = false)
+        AND p."paymentDate" >= ${from} AND p."paymentDate" <= ${to}
+      GROUP BY 1, 2`),
+    // Caixas do periodo AINDA ABERTOS (sem fechamento): a conferencia so olha caixa fechado, mas
+    // o esperado do dia soma a venda da loja inteira — sem este aviso o dia aparece com falta
+    // que e so caixa que nao fechou (visto no 28/08 da Casa de Carnes).
+    prisma.cashClosing.findMany({
+      where: { ...scope, closedAt: null, openedAt: { gte: from, lte: to } },
+      select: { openedAt: true, pdv: true },
+      take: 100,
+    }),
     getFreshnessMeta(tenantId, storeId),
   ]);
 
@@ -1984,21 +2003,56 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
 
   // FECHAMENTO POR DIA (dono 04/09): a loja tem 2 caixas e a sangria nao diz de qual saiu, entao
   // o DIA e a unidade que fecha de verdade. esperado(dia) = soma dos caixas − sangrias do dia.
-  const dias = new Map<string, { dia: string; caixas: number; esperado: number; contado: number; sangrias: number; suprimentos: number; quebra: number }>();
+  const dias = new Map<string, { dia: string; caixas: number; esperado: number; contado: number; sangrias: number; suprimentos: number; quebra: number; outrasFormas: number; caixaAberto: boolean }>();
   for (const c of out) {
-    const d = dias.get(c.dia) ?? { dia: c.dia, caixas: 0, esperado: 0, contado: 0, sangrias: 0, suprimentos: 0, quebra: 0 };
+    const d = dias.get(c.dia) ?? { dia: c.dia, caixas: 0, esperado: 0, contado: 0, sangrias: 0, suprimentos: 0, quebra: 0, outrasFormas: 0, caixaAberto: false };
     d.caixas++; d.esperado += c.esperado; d.contado += c.contado;
     dias.set(c.dia, d);
   }
   const r2 = (n: number): number => Math.round(n * 100) / 100;
+  // SO DINHEIRO ENTRA NA QUEBRA (modelo do dono, 04/09): a gaveta so tem cedula pra conferir.
+  // Cartao e PIX nao se contam no fechamento — quem confere isso e o extrato da maquininha
+  // (tela Conciliacao). Misturar tudo criava uma "quebra" de centenas de milhares que era so
+  // forma nao contada. Aqui: dinheiro do dia (todos os pagamentos, com ou sem vinculo a venda,
+  // entao independe do relink) + troco dos caixas − sangrias, contra o dinheiro contado.
+  const dinheiroPorDia = new Map<string, number>();
+  const outrasPorDia = new Map<string, number>();
+  for (const r of diaRows) {
+    const k = dayKey(r.day);
+    const forma = normalizePaymentType(r.paymentType) ?? 'outros';
+    const alvo = forma === 'dinheiro' ? dinheiroPorDia : outrasPorDia;
+    alvo.set(k, (alvo.get(k) ?? 0) + Number(r.total));
+  }
+  const fundosPorDia = new Map<string, number>();
+  const contadoDinheiroPorDia = new Map<string, number>();
+  for (const c of closings) {
+    const k = dayKey(c.openedAt);
+    fundosPorDia.set(k, (fundosPorDia.get(k) ?? 0) + (c.openingAmount != null ? Number(c.openingAmount) : 0));
+    for (const sp of c.species) {
+      if ((normalizePaymentType(sp.especie) ?? 'outros') !== 'dinheiro') continue;
+      contadoDinheiroPorDia.set(k, (contadoDinheiroPorDia.get(k) ?? 0) + Number(sp.counted));
+    }
+  }
   for (const d of dias.values()) {
     const mov = movByDay.get(d.dia);
-    const jaNaLinha = (closingsPerDay.get(d.dia) ?? 0) === 1; // caixa unico ja descontou a sangria
-    d.sangrias = mov && !jaNaLinha ? mov.sangria : 0;
+    d.sangrias = mov?.sangria ?? 0;
     d.suprimentos = mov?.suprimento ?? 0;
-    d.esperado = r2(d.esperado - d.sangrias);
-    d.contado = r2(d.contado);
+    d.esperado = r2((dinheiroPorDia.get(d.dia) ?? 0) + (fundosPorDia.get(d.dia) ?? 0) - d.sangrias);
+    d.contado = r2(contadoDinheiroPorDia.get(d.dia) ?? 0);
     d.quebra = r2(d.contado - d.esperado);
+    d.outrasFormas = r2(outrasPorDia.get(d.dia) ?? 0);
+  }
+  const abertosPorDia = new Map<string, string[]>();
+  for (const a of abertos) {
+    const k = dayKey(a.openedAt);
+    abertosPorDia.set(k, [...(abertosPorDia.get(k) ?? []), a.pdv ?? '?']);
+  }
+  for (const d of dias.values()) {
+    const pdvs = abertosPorDia.get(d.dia);
+    if (pdvs?.length) {
+      d.caixaAberto = true;
+      avisos.add(`Em ${d.dia} o caixa ${pdvs.join(', ')} não foi fechado — a venda dele entra no esperado mas não há contagem, então a falta do dia está exagerada.`);
+    }
   }
   const porDia = [...dias.values()].sort((a, b) => b.dia.localeCompare(a.dia));
   const totals = porDia.reduce((a, d) => ({ esperado: a.esperado + d.esperado, contado: a.contado + d.contado, quebra: a.quebra + d.quebra }), { esperado: 0, contado: 0, quebra: 0 });
