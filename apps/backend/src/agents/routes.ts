@@ -112,6 +112,16 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, table: body.table, anterior: r?.anterior ?? null };
   });
 
+  // Roda um report do catalogo no Firebird da loja e devolve as linhas (super-admin). Serve pra
+  // diagnosticar o ERP sem entrar no PC — ex.: 'schema-columns' pra saber se MOV_OPERADORES
+  // guarda o historico da sangria (cofre? banco? compra?), duvida aberta do dono em 04/09.
+  app.post<{ Params: { id: string } }>('/api/admin/agents/:id/report', { preHandler: [requireAuth, requireSuperAdmin] }, async (req) => {
+    const body = z.object({ reportId: z.string().min(2).max(60), params: z.record(z.unknown()).default({}) }).parse(req.body);
+    const agent = await prisma.agent.findFirst({ where: { id: req.params.id, revokedAt: null } });
+    if (!agent) throw Errors.notFound('Agente nao encontrado');
+    return callAgent(agent.id, 'runReport', { reportId: body.reportId, params: body.params }, 25_000);
+  });
+
   app.post('/api/agents/sync-now', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req, reply) => {
     const tenantId = req.user!.tenantId;
     const ultimo = ultimoSyncNow.get(tenantId) ?? 0;

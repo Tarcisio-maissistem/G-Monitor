@@ -89,6 +89,9 @@ const mapPayment = (r: any) => ({
     especie: r['especie'] ? String(r['especie']) : null,
     value: Number(r.total_value),
     kind: paymentKind(r['tipo']),
+    obs: r['obs'] ? String(r['obs']).trim() : null,
+    caixa: r['caixa'] != null ? String(r['caixa']).trim() : null,
+    operador: r['operador'] != null ? String(r['operador']).trim() : null,
   });
 const mapCashClosing = (r: any) => ({
     sourceId: String(r['source_id']),
@@ -355,6 +358,14 @@ async function syncCashClosingSpecies(cfg: AgentConfig): Promise<number> {
 // depois, titulo baixado depois ou valor editado NUNCA subia. Quando a tabela esta em dia,
 // reenvia tudo com data nos ultimos RECENT_DAYS dias — a nuvem faz upsert, o checkpoint fica quieto.
 const RECENT_DAYS = 7;
+// A janela recente reenvia milhares de linhas; rodar a cada tick (1h) pesa no plano free da
+// Supabase sem necessidade — cancelamento/baixa de ontem nao muda de minuto em minuto. Uma vez
+// a cada 6h por tabela ja pega tudo bem antes do fechamento do dia. Marca no proprio sync.json.
+const RECENT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+function podeRodarRecente(table: string): boolean {
+  const ultimo = Number(getCheckpoint(`recent:${table}`) ?? '0');
+  return Date.now() - ultimo >= RECENT_INTERVAL_MS;
+}
 function desdeRecente(): Date {
   const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - RECENT_DAYS); return d;
 }
@@ -385,8 +396,10 @@ async function janelaRecente(cfg: AgentConfig, emDia: Record<string, boolean>): 
   }
   for (const [table, entryId, mapRow, params] of plano) {
     if (!emDia[table]) continue; // ainda em backfill: nao gastar a nuvem com reenvio
+    if (!podeRodarRecente(table)) continue; // ja rodou ha menos de 6h
     try {
       const n = await syncRecent(cfg, table, entryId, mapRow, params);
+      setCheckpoint(`recent:${table}`, String(Date.now()));
       if (n > 0) logger.info({ table, reenviadas: n, dias: RECENT_DAYS }, 'janela recente');
     } catch (err) {
       logger.warn({ err, table }, 'janela recente falhou (segue no proximo tick)');
