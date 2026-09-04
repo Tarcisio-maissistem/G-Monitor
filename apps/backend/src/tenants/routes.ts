@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
 import { seal, isSealed } from '../lib/secretBox.js';
 import { prisma } from '../db/prisma.js';
+import { marcarDadosNovos } from '../reports/routes.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
 
@@ -120,6 +121,10 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
       where: { id: req.user!.tenantId },
       data: { meta: meta as Prisma.InputJsonValue },
     });
+    // Meta/taxas mudaram => relatorios cacheados por versao de sync (monthly-goal, previsto,
+    // banco-dia) precisam recalcular. Sem isto a Ferragista salvou a meta e o dashboard
+    // seguiu mostrando "defina a meta" por ate 24h (achado do dono 04/09).
+    await marcarDadosNovos(req.user!.tenantId);
     const updatedMeta = updated.meta as Record<string, unknown>;
     return { settings: { monthlyGoal: updatedMeta.monthlyGoal, commissionRules: updatedMeta.commissionRules, feeRules: updatedMeta.feeRules ?? [], taxasAdquirente: updatedMeta.taxasAdquirente ?? [], adquirentes: updatedMeta.adquirentes ?? [], roteamento: updatedMeta.roteamento ?? {} } };
   });
