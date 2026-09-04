@@ -91,7 +91,11 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
              UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
-             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO,
+             -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
+             -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
+             -- ao PDV certo em vez de jogar tudo no dia.
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
       FROM MOV_OPERADORES M
       LEFT JOIN (
         SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
@@ -202,7 +206,11 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
              UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
-             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO,
+             -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
+             -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
+             -- ao PDV certo em vez de jogar tudo no dia.
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
       FROM MOV_OPERADORES M
       LEFT JOIN (
         SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
@@ -334,6 +342,19 @@ export const CATALOG: Record<string, CatalogEntry> = {
       JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = RF.RDB$FIELD_SOURCE
       WHERE UPPER(TRIM(RF.RDB$RELATION_NAME)) = UPPER(?)
       ORDER BY RF.RDB$FIELD_POSITION
+    `,
+  },
+  // Amostra de sangrias/suprimentos com o motivo — diagnostico, sem dado de cliente.
+  'mov-operadores-amostra': {
+    id: 'mov-operadores-amostra',
+    description: 'Ultimas sangrias/suprimentos com OBS, caixa e operador',
+    paramSchema: z.object({ limit: z.number().int().positive().max(200) }),
+    sql: `
+      SELECT FIRST ? M.ID, M.DATA, M.TIPO, M.ESPECIE, M.VALOR, M.NRO_FAB, M.OPERADOR,
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS
+      FROM MOV_OPERADORES M
+      WHERE UPPER(TRIM(M.TIPO)) IN ('SANGRIA', 'SUPRIMENTO')
+      ORDER BY M.ID DESC
     `,
   },
   'ping-db': {

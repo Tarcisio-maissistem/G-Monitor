@@ -309,7 +309,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
 
         persisted = await bulkUpsert(
           'payments',
-          ['tenantId', 'storeId', 'sourceId', 'saleId', 'saleSourceId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId', 'saleId', 'saleSourceId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'obs', 'caixa', 'operador', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
@@ -324,6 +324,9 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             especie: r.especie ? String(r.especie) : null,
             value: Number(r.value ?? 0),
             kind: r.kind ? String(r.kind) : null, // null = agente antigo (tratar como venda)
+            obs: r.obs ? String(r.obs).slice(0, 200) : null,
+            caixa: r.caixa ? String(r.caixa).slice(0, 20) : null,
+            operador: r.operador ? String(r.operador).slice(0, 40) : null,
             createdAt: new Date(),
           })),
         );
