@@ -118,3 +118,31 @@ describe('mergeForecast', () => {
     expect(r.totals).toEqual({ entradas: 150, saidas: 100, saldo: 50 });
   });
 });
+
+describe('sangria e suprimento sao movimento interno (dono 04/09)', () => {
+  const dia = '2026-08-26';
+  it('sangria NAO entra nas saidas (dinheiro so muda de lugar dentro da loja)', () => {
+    const r = mergeCashflow({
+      payments: [
+        { day: dia, paymentType: 'DINHEIRO', avulso: false, kind: 'venda', total: 1000, count: 10 },
+        { day: dia, paymentType: 'DINHEIRO', avulso: false, kind: 'sangria', total: 800, count: 2 },
+      ],
+      receivables: [], payables: [],
+    }, 'day');
+    expect(r.totals.saidas).toBe(0);
+    expect(r.totals.entradas).toBe(1000);
+    expect(r.data[0]!.detalhe.sangrias).toBe(800); // continua visivel pra conferencia
+  });
+  it('suprimento (troco) nao vira receita', () => {
+    const r = mergeCashflow({
+      payments: [{ day: dia, paymentType: 'DINHEIRO', avulso: false, kind: 'suprimento', total: 400, count: 2 }],
+      receivables: [], payables: [],
+    }, 'day');
+    expect(r.totals.entradas).toBe(0);
+    expect(r.data[0]!.detalhe.suprimentos).toBe(400);
+  });
+  it('conta paga continua sendo saida', () => {
+    const r = mergeCashflow({ payments: [], receivables: [], payables: [{ day: dia, total: 250, count: 1 }] }, 'day');
+    expect(r.totals.saidas).toBe(250);
+  });
+});

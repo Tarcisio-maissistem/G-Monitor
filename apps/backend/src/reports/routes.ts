@@ -1945,13 +1945,20 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
     const dia = dayKey(c.openedAt);
     const esp = esperado.get(`${dia}|${pdvNum(c.pdv)}`) ?? new Map<string, number>();
     const mov = movByDay.get(dia);
+    // A sangria do GDOOR nao diz de qual caixa saiu. Com um caixa so, e dele; com dois ou mais
+    // ela nao entra na linha do caixa (ratear seria inventar) e sim no FECHAMENTO DO DIA abaixo.
     const unico = (closingsPerDay.get(dia) ?? 0) === 1;
     const sangrias = mov && unico ? mov.sangria : 0;
     const suprimentos = mov && unico ? mov.suprimento : 0;
-    if (mov && !unico && (mov.sangria > 0 || mov.suprimento > 0)) avisos.add(`Em ${dia} há sangria/suprimento e mais de um caixa — o GDOOR não diz de qual caixa, ficaram fora do esperado.`);
+    if (mov && !unico && mov.sangria > 0) avisos.add(`Em ${dia} houve sangria com mais de um caixa aberto — o GDOOR não diz de qual caixa saiu, então ela entra no fechamento do DIA (linha de cada caixa fica sem ela).`);
     const fundo = c.openingAmount != null ? Number(c.openingAmount) : null;
-    // dinheiro fisico esperado na gaveta = fundo + vendas em dinheiro + suprimento - sangria
-    const espDinheiro = (esp.get('dinheiro') ?? 0) + (fundo ?? 0) + suprimentos - sangrias;
+    // TROCO CONTADO UMA VEZ SO (dono 04/09): o suprimento do dia E o troco inicial dos caixas —
+    // conferido de 25 a 29/08 na Casa de Carnes, o suprimento do dia bate CENTAVO a centavo com a
+    // soma dos fundos de abertura (400,00 = 200+200; 402,90 = 204,90+198+0...). Somar fundo E
+    // suprimento contava o mesmo dinheiro 2x e inflava o esperado. Fica so o fundo, que e por caixa.
+    // O operador conta a gaveta inteira no fim do dia, troco incluso — por isso o fundo entra.
+    // dinheiro fisico esperado na gaveta = fundo (troco) + vendas em dinheiro - sangria
+    const espDinheiro = (esp.get('dinheiro') ?? 0) + (fundo ?? 0) - sangrias;
     const contadoPorForma = new Map<string, number>();
     for (const sp of c.species) {
       const forma = normalizePaymentType(sp.especie) ?? 'outros';
@@ -1975,8 +1982,34 @@ async function buildCashConference(tenantId: string, storeId: string | null, fro
   });
   if (closings.some((c) => c.species.length === 0)) avisos.add('Alguns fechamentos vieram sem contagem por forma (operador fechou sem informar) — contado = 0 nesses.');
 
-  const totals = out.reduce((a, c) => ({ esperado: a.esperado + c.esperado, contado: a.contado + c.contado, quebra: a.quebra + c.quebra }), { esperado: 0, contado: 0, quebra: 0 });
-  return { closings: out, totals, fechamentosComQuebra: out.filter((c) => Math.abs(c.quebra) >= 0.005).length, avisos: [...avisos], meta };
+  // FECHAMENTO POR DIA (dono 04/09): a loja tem 2 caixas e a sangria nao diz de qual saiu, entao
+  // o DIA e a unidade que fecha de verdade. esperado(dia) = soma dos caixas − sangrias do dia.
+  const dias = new Map<string, { dia: string; caixas: number; esperado: number; contado: number; sangrias: number; suprimentos: number; quebra: number }>();
+  for (const c of out) {
+    const d = dias.get(c.dia) ?? { dia: c.dia, caixas: 0, esperado: 0, contado: 0, sangrias: 0, suprimentos: 0, quebra: 0 };
+    d.caixas++; d.esperado += c.esperado; d.contado += c.contado;
+    dias.set(c.dia, d);
+  }
+  const r2 = (n: number): number => Math.round(n * 100) / 100;
+  for (const d of dias.values()) {
+    const mov = movByDay.get(d.dia);
+    const jaNaLinha = (closingsPerDay.get(d.dia) ?? 0) === 1; // caixa unico ja descontou a sangria
+    d.sangrias = mov && !jaNaLinha ? mov.sangria : 0;
+    d.suprimentos = mov?.suprimento ?? 0;
+    d.esperado = r2(d.esperado - d.sangrias);
+    d.contado = r2(d.contado);
+    d.quebra = r2(d.contado - d.esperado);
+  }
+  const porDia = [...dias.values()].sort((a, b) => b.dia.localeCompare(a.dia));
+  const totals = porDia.reduce((a, d) => ({ esperado: a.esperado + d.esperado, contado: a.contado + d.contado, quebra: a.quebra + d.quebra }), { esperado: 0, contado: 0, quebra: 0 });
+  return {
+    closings: out,
+    porDia,
+    totals: { esperado: r2(totals.esperado), contado: r2(totals.contado), quebra: r2(totals.quebra) },
+    fechamentosComQuebra: out.filter((c) => Math.abs(c.quebra) >= 0.005).length,
+    diasComQuebra: porDia.filter((d) => Math.abs(d.quebra) >= 0.005).length,
+    avisos: [...avisos], meta,
+  };
 }
 
 // ─── Contas a pagar / contas a receber ──────────────────────────────────────

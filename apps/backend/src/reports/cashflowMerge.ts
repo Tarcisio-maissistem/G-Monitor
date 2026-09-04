@@ -29,8 +29,12 @@ export interface CashflowDetail {
   avulsos: number;
   crediarioRecebido: number;
   contasPagas: number;
-  sangrias: number; // retirada de dinheiro do caixa (P5) — e SAIDA
-  suprimentos: number; // aporte de troco/fundo (P5) — nao e receita; informativo
+  // MOVIMENTO INTERNO (dono 04/09): a sangria tira da gaveta e leva pro cofre/banco da loja e o
+  // suprimento devolve o troco na abertura do dia seguinte — o dinheiro nao entra nem sai da
+  // EMPRESA. Nenhum dos dois conta em entradas/saidas; ficam aqui so pra conferencia da gaveta.
+  // Antes a sangria entrava como saida e sumia R$ 45 mil do saldo de agosto que nunca saiu.
+  sangrias: number;
+  suprimentos: number;
 }
 
 export interface CashflowRow {
@@ -162,7 +166,7 @@ export function mergeCashflow(
   for (const row of data) {
     const v = row.detalhe.vendas;
     row.entradas = round2(v.dinheiro + v.cartao + v.pix + v.outros + row.detalhe.avulsos + row.detalhe.crediarioRecebido);
-    row.saidas = round2(row.detalhe.contasPagas + row.detalhe.sangrias);
+    row.saidas = round2(row.detalhe.contasPagas); // sangria = movimento interno, nao saida
     row.saldoDia = round2(row.entradas - row.saidas);
     acumulado = round2(acumulado + row.saldoDia);
     row.saldoAcumulado = acumulado;
