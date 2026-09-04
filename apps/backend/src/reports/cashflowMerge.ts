@@ -29,11 +29,12 @@ export interface CashflowDetail {
   avulsos: number;
   crediarioRecebido: number;
   contasPagas: number;
-  // MOVIMENTO INTERNO (dono 04/09): a sangria tira da gaveta e leva pro cofre/banco da loja e o
-  // suprimento devolve o troco na abertura do dia seguinte — o dinheiro nao entra nem sai da
-  // EMPRESA. Nenhum dos dois conta em entradas/saidas; ficam aqui so pra conferencia da gaveta.
-  // Antes a sangria entrava como saida e sumia R$ 45 mil do saldo de agosto que nunca saiu.
+  // SANGRIA = retirada de dinheiro da gaveta. O dono (04/09) confirmou que a loja tem DOIS
+  // caminhos de saida: pelo contas a pagar e pelo proprio caixa. Entao a sangria conta como
+  // saida (o dinheiro sai da gaveta), mas em LINHA SEPARADA de "contas pagas": parte dela pode
+  // ser so transferencia pro cofre/banco, e o GDOOR nao guarda o motivo no dado que sincronizamos.
   sangrias: number;
+  // SUPRIMENTO = troco devolvido pra gaveta na abertura. Nao e receita: nunca entra nas entradas.
   suprimentos: number;
 }
 
@@ -166,7 +167,7 @@ export function mergeCashflow(
   for (const row of data) {
     const v = row.detalhe.vendas;
     row.entradas = round2(v.dinheiro + v.cartao + v.pix + v.outros + row.detalhe.avulsos + row.detalhe.crediarioRecebido);
-    row.saidas = round2(row.detalhe.contasPagas); // sangria = movimento interno, nao saida
+    row.saidas = round2(row.detalhe.contasPagas + row.detalhe.sangrias); // dois caminhos de saida (dono 04/09)
     row.saldoDia = round2(row.entradas - row.saidas);
     acumulado = round2(acumulado + row.saldoDia);
     row.saldoAcumulado = acumulado;

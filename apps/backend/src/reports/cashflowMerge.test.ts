@@ -119,9 +119,9 @@ describe('mergeForecast', () => {
   });
 });
 
-describe('sangria e suprimento sao movimento interno (dono 04/09)', () => {
+describe('sangria conta como saida do caixa, suprimento nao e receita (dono 04/09)', () => {
   const dia = '2026-08-26';
-  it('sangria NAO entra nas saidas (dinheiro so muda de lugar dentro da loja)', () => {
+  it('sangria entra nas saidas em linha propria (a loja paga despesa pelo caixa tambem)', () => {
     const r = mergeCashflow({
       payments: [
         { day: dia, paymentType: 'DINHEIRO', avulso: false, kind: 'venda', total: 1000, count: 10 },
@@ -129,9 +129,10 @@ describe('sangria e suprimento sao movimento interno (dono 04/09)', () => {
       ],
       receivables: [], payables: [],
     }, 'day');
-    expect(r.totals.saidas).toBe(0);
+    expect(r.totals.saidas).toBe(800);
     expect(r.totals.entradas).toBe(1000);
-    expect(r.data[0]!.detalhe.sangrias).toBe(800); // continua visivel pra conferencia
+    expect(r.data[0]!.detalhe.sangrias).toBe(800); // visivel em separado das contas pagas
+    expect(r.data[0]!.detalhe.contasPagas).toBe(0);
   });
   it('suprimento (troco) nao vira receita', () => {
     const r = mergeCashflow({
