@@ -50,7 +50,7 @@ export function FluxoCaixaPage(): JSX.Element {
 
           <KpiRow cols={3}>
             <KpiCard label="Entradas" info="Todo dinheiro que entrou no caixa no período: vendas à vista, recebimentos de fiado e suprimentos." value={formatBRL(totals?.entradas ?? 0)} tone="emerald" compact sub={periodLabel(range)} />
-            <KpiCard label="Saídas" info="Dinheiro que saiu: contas a pagar baixadas e sangrias do caixa." value={formatBRL(totals?.saidas ?? 0)} tone="red" compact sub="contas a pagar baixadas" badge={<DataStatusBadge status="estimate" />} />
+            <KpiCard label="Saídas" info="A loja paga por dois caminhos: contas a pagar baixadas e retiradas do próprio caixa (sangria). Os dois somam aqui, em linhas separadas na tabela. Atenção: retirada feita só para levar o dinheiro ao cofre ou ao banco não é despesa — o GDOOR não guarda o motivo da sangria." value={formatBRL(totals?.saidas ?? 0)} tone="red" compact sub="contas pagas + retiradas do caixa" badge={<DataStatusBadge status="estimate" />} />
             {/* compacto (R$ 545,8 mil) — valor cheio nao cabe no card de 1/3 em 375px e quebrava
                 linha no meio do numero (visto em screenshot real 25/08); o cheio vai no sub */}
             <KpiCard label="Variação" info="Entradas − Saídas. Positivo = sobrou dinheiro no período; negativo = saiu mais do que entrou." value={formatCompactBRL(totals?.variacao ?? 0)} tone={variacaoTone} compact highlight sub={`${formatBRL(totals?.variacao ?? 0)} · não é saldo em caixa`} />
@@ -65,7 +65,10 @@ export function FluxoCaixaPage(): JSX.Element {
               columns={[
                 { key: 'dia', header: 'Dia', render: (r) => formatBrDate(r.dia) },
                 { key: 'entradas', header: 'Entradas', align: 'right', render: (r) => <span className="text-emerald-700">{formatBRL(r.entradas)}</span> },
-                { key: 'saidas', header: 'Saídas', align: 'right', render: (r) => <span className="text-red-700">{formatBRL(r.saidas)}</span> },
+                // Duas colunas de saida: o dono paga tanto pelo contas a pagar quanto tirando
+                // dinheiro do proprio caixa (sangria) — juntar as duas escondia de onde saiu.
+                { key: 'contasPagas', header: 'Contas pagas', align: 'right', render: (r) => <span className="text-red-700">{formatBRL(r.detalhe.contasPagas)}</span> },
+                { key: 'sangrias', header: 'Retirado do caixa', align: 'right', render: (r) => <span className="text-red-700">{r.detalhe.sangrias > 0 ? formatBRL(r.detalhe.sangrias) : '—'}</span> },
                 { key: 'saldoDia', header: 'Dia', align: 'right', render: (r) => formatBRL(r.saldoDia) },
                 { key: 'saldoAcumulado', header: 'Acumulado', align: 'right', className: 'font-medium', render: (r) => formatBRL(r.saldoAcumulado) },
               ]}

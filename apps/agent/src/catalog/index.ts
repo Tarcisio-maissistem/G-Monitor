@@ -321,6 +321,21 @@ export const CATALOG: Record<string, CatalogEntry> = {
       ORDER BY M.ID ASC
     `,
   },
+  // Colunas de uma tabela do Firebird — para descobrir o que existe sem chutar (ex.: se
+  // MOV_OPERADORES guarda o historico/caixa da sangria, que diria se ela pagou despesa ou so
+  // foi pro cofre). So metadados, nunca dado do cliente.
+  'schema-columns': {
+    id: 'schema-columns',
+    description: 'Colunas de uma tabela (RDB$RELATION_FIELDS)',
+    paramSchema: z.object({ table: z.string().min(2).max(40) }),
+    sql: `
+      SELECT TRIM(RF.RDB$FIELD_NAME) AS COLUNA, TRIM(F.RDB$FIELD_TYPE) AS TIPO, F.RDB$FIELD_LENGTH AS TAMANHO
+      FROM RDB$RELATION_FIELDS RF
+      JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = RF.RDB$FIELD_SOURCE
+      WHERE UPPER(TRIM(RF.RDB$RELATION_NAME)) = UPPER(?)
+      ORDER BY RF.RDB$FIELD_POSITION
+    `,
+  },
   'ping-db': {
     id: 'ping-db',
     description: 'Health check Firebird',
