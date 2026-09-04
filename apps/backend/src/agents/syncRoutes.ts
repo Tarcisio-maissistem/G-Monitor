@@ -12,6 +12,9 @@ import { marcarDadosNovos } from '../reports/routes.js';
 // Auth: Bearer agent token (mesmo formato de WS).
 
 const syncBatchSchema = z.object({
+  // recent=true: reenvio da JANELA RECENTE (linhas alteradas: cancelamento, baixa, edicao).
+  // Nao avanca checkpoint nem conta no ritmo — o agente manda no maximo 1 por tabela por tick.
+  recent: z.boolean().optional(),
   table: z.enum([
     'sales',
     'saleItems',
@@ -58,6 +61,7 @@ async function bulkUpsert(
     if (ruim) {
       logger.error({ table, sourceId: r['sourceId'], tenantId: r['tenantId'], storeId: r['storeId'], campo: ruim.campo, valor: String(ruim.valor), linha: resumoNumerico(r) },
         'LINHA PULADA no sync — valor numerico invalido vindo do GDOOR');
+      puladasNoLote.push({ table, sourceId: String(r['sourceId']), motivo: `${ruim.campo}=${String(ruim.valor)}` });
       continue;
     }
     validas.push(r);
@@ -103,6 +107,7 @@ async function bulkUpsert(
           table, sourceId: r['sourceId'], linha: resumoNumerico(r),
           err: String((rowErr as Error).message).slice(0, 200),
         }, 'LINHA PULADA no sync — valor invalido vindo do GDOOR');
+        puladasNoLote.push({ table, sourceId: String(r['sourceId']), motivo: String((rowErr as Error).message).slice(0, 120) });
       }
     }
     return ok;
@@ -110,6 +115,10 @@ async function bulkUpsert(
 }
 
 // ─── Ritmo do sync por loja x tabela (em memoria; 1 processo) ─────────────────────────
+// Linhas puladas no request atual: devolvidas ao agente em `skipped` (auditoria 04/09: antes
+// o checkpoint passava por cima e a linha sumia em silencio; agora o agente grava dead-letter).
+let puladasNoLote: Array<{ table: string; sourceId: string; motivo: string }> = [];
+
 const LOTE_CHEIO = 1000; // BATCH_SIZE do agente
 const SYNC_MIN_INTERVAL_MS = Number(process.env.SYNC_MIN_INTERVAL_MS ?? 60 * 60 * 1000);
 interface EstadoRitmo { ultimoAceito: number; ultimoLoteCheio: boolean }
@@ -201,7 +210,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     //    SYNC_MIN_INTERVAL_MS (1h). O agente recebe 503 + Retry-After e tenta depois — barato,
     //    nao toca no banco. Vale pros agentes antigos (tick de 90s) sem precisar atualizar.
     //  - "Sincronizar agora" no painel limpa a trava da loja (ver /api/agents/sync-now).
-    const ritmo = decidirRitmo(ctx.storeId, body.table);
+    puladasNoLote = [];
+    const ritmo = body.recent ? { aceita: true as const, esperarMs: 0 } : decidirRitmo(ctx.storeId, body.table);
     if (!ritmo.aceita) {
       reply.header('Retry-After', String(Math.ceil(ritmo.esperarMs / 1000)));
       return reply.status(503).send({ error: { code: 'sync_throttled', message: `Loja em dia; proxima sincronizacao de ${body.table} em ${Math.ceil(ritmo.esperarMs / 60000)} min` } });
@@ -235,6 +245,19 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             updatedAt: new Date(),
           })),
         );
+        // Religa pagamentos que chegaram antes destas vendas (saleId NULL, saleSourceId conhecido).
+        {
+          const ids = [...new Set(body.rows.map((r) => String(r.sourceId)))];
+          if (ids.length) {
+            const religados = await prismaSync.$executeRaw`
+              UPDATE payments p SET "saleId" = s.id
+              FROM sales s
+              WHERE p."tenantId" = ${ctx.tenantId} AND p."storeId" = ${ctx.storeId} AND p."saleId" IS NULL
+                AND p."saleSourceId" = s."sourceId" AND s."tenantId" = p."tenantId" AND s."storeId" = p."storeId"
+                AND s."sourceId" IN (${Prisma.join(ids)})`;
+            if (religados > 0) logger.info({ tenantId: ctx.tenantId, religados }, 'pagamentos religados a vendas');
+          }
+        }
         break;
 
       case 'saleItems': {
@@ -286,13 +309,16 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
 
         persisted = await bulkUpsert(
           'payments',
-          ['tenantId', 'storeId', 'sourceId', 'saleId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId', 'saleId', 'saleSourceId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
             storeId: ctx.storeId,
             sourceId: String(r.sourceId),
             saleId: r.saleSourceId ? (saleMap.get(String(r.saleSourceId)) ?? null) : null,
+            // Auditoria 04/09: 78% dos pagamentos chegavam ANTES da venda e ficavam sem saleId
+            // pra sempre (a nuvem nao guardava o id de origem). Agora guarda e religa no upsert de sales.
+            saleSourceId: r.saleSourceId ? String(r.saleSourceId) : null,
             paymentDate: new Date(String(r.paymentDate)),
             paymentType: String(r.paymentType ?? 'OUTROS'),
             especie: r.especie ? String(r.especie) : null,
@@ -496,7 +522,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     const agentVersion = typeof req.headers['x-agent-version'] === 'string' ? req.headers['x-agent-version'].slice(0, 32) : undefined;
     await prisma.agent.update({ where: { id: ctx.agentId }, data: { lastSeenAt: new Date(), ...(agentVersion ? { agentVersion } : {}) } });
 
-    return { persisted };
+    return { persisted, skipped: puladasNoLote };
   });
 
   // GET /api/agent/sync/state — agente consulta seus checkpoints atuais.

@@ -72,6 +72,9 @@ const emVoo = new Map<string, Promise<unknown>>();
 // na virada de meia-noite a chave muda mesmo sem sync, senao o payload de ontem viraria hoje.
 // Sem datav (Redis reiniciado / tenant nunca sincronizou) cai no TTL curto de 600s de sempre.
 const DATA_VERSION_CACHE_TTL_SECONDS = 24 * 3600;
+// Cada subida do backend (deploy) troca o BOOT_ID e invalida tudo: a correcao da NFC-e 2x
+// (PR #111) ficou 24h escondida atras do cache ate alguem mexer na meta (achado 04/09).
+const BOOT_ID = Date.now().toString(36);
 export async function marcarDadosNovos(tenantId: string): Promise<void> {
   try {
     await redis.set(`datav:${tenantId}`, String(Date.now()));
@@ -90,7 +93,7 @@ function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req
       // sem datav segue no TTL curto
     }
     const hoje = new Date().toISOString().slice(0, 10);
-    const key = `report:${tenantId}:${datav ?? 'v0'}:${hoje}:${reportId}:${JSON.stringify(req.query)}`;
+    const key = `report:${BOOT_ID}:${tenantId}:${datav ?? 'v0'}:${hoje}:${reportId}:${JSON.stringify(req.query)}`;
     try {
       const hit = await redis.get(key);
       if (hit) return JSON.parse(hit);

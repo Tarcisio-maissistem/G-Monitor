@@ -4,6 +4,7 @@ import { RPC_ERROR_CODES } from '@gmonitor/rpc-contracts';
 import { getFirebirdPool } from '../firebird/manager.js';
 import { logger } from '../logger.js';
 import { runSyncTick } from '../sync/syncer.js';
+import { getCheckpoint, setCheckpoint } from '../sync/checkpoint.js';
 
 interface RpcContext {
   uptimeSeconds: number;
@@ -23,6 +24,17 @@ export async function handleRpc(op: string, params: unknown, ctx: RpcContext): P
     case 'syncNow': {
       const iniciado = await runSyncTick();
       return { iniciado };
+    }
+
+    // Zera o checkpoint de UMA tabela: o proximo tick reenvia tudo dela (upsert idempotente).
+    // Pedido pela nuvem 1x apos a auditoria 04/09 para religar pagamentos as vendas.
+    case 'resetCheckpoint': {
+      const { table } = params as { table: string };
+      if (!/^[a-zA-Z]+$/.test(table ?? '')) throw new RpcError(RPC_ERROR_CODES.INVALID_PARAMS, 'table invalida');
+      const anterior = getCheckpoint(table);
+      setCheckpoint(table, '0');
+      logger.warn({ table, anterior }, 'checkpoint zerado por RPC — tabela sera reenviada inteira');
+      return { ok: true, anterior };
     }
 
     case 'ping':

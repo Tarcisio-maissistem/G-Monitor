@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Errors } from '@gmonitor/shared';
 import { liberarRitmo } from './syncRoutes.js';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability, requireSuperAdmin } from '../middleware/auth.js';
 import { audit } from '../middleware/audit.js';
 import { generateAgentToken, hashToken } from '../auth/tokens.js';
 import { v4 as uuid } from 'uuid';
@@ -101,6 +101,17 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   // via RPC (agente >= 0.9.7); agente antigo pega a liberacao no proximo tick de 90s. Limite
   // de 1 clique a cada 5 min por empresa — o objetivo e custo minimo, nao um botao de spam.
   const ultimoSyncNow = new Map<string, number>();
+  // Reenvio completo de uma tabela (super-admin): zera o checkpoint no agente e ele manda tudo
+  // de novo; o upsert religa pagamento->venda. Usado 1x apos a auditoria 04/09.
+  app.post<{ Params: { id: string } }>('/api/admin/agents/:id/reset-checkpoint', { preHandler: [requireAuth, requireSuperAdmin] }, async (req) => {
+    const body = z.object({ table: z.enum(['sales', 'saleItems', 'payments', 'payables', 'receivables', 'cashClosings', 'cashClosingSpecies', 'cardTransactions']) }).parse(req.body);
+    const agent = await prisma.agent.findFirst({ where: { id: req.params.id, revokedAt: null } });
+    if (!agent) throw Errors.notFound('Agente nao encontrado');
+    liberarRitmo(agent.storeId);
+    const r = await callAgent<{ ok: boolean; anterior: string | null }>(agent.id, 'resetCheckpoint', { table: body.table }, 8_000);
+    return { ok: true, table: body.table, anterior: r?.anterior ?? null };
+  });
+
   app.post('/api/agents/sync-now', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req, reply) => {
     const tenantId = req.user!.tenantId;
     const ultimo = ultimoSyncNow.get(tenantId) ?? 0;
