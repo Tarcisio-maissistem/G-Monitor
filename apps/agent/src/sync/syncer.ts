@@ -442,13 +442,36 @@ export function startSyncLoop(cfg: AgentConfig): NodeJS.Timeout {
 // Trava contra sobreposicao: se um tick demorar mais que o intervalo (rede lenta, tabela
 // grande), ticks empilhados multiplicam a carga no backend em vez de so atrasar — foi
 // exatamente isso que derrubou o dashboard do Tarcisio em 24/08.
+// BACKFILL EM LOTES (0.9.10): o tick mandava UM lote de 1000 linhas por tabela e voltava a
+// dormir 1 hora — 1.000 linhas/hora. Com 300 mil itens de venda atrasados isso levaria meses e a
+// Curva ABC do mes atual ficava vazia. Agora, enquanto o lote vier CHEIO (ou seja, ainda ha
+// historico), continua puxando no mesmo tick ate o teto. O banco agora e local e aguenta; o
+// servidor tambem ja libera lote cheio seguido (decidirRitmo). 503 (pausa/ritmo) encerra o laco.
+const MAX_LOTES_POR_TICK = 60; // 60 mil linhas por tabela por ciclo
+async function ateEsvaziar(nome: string, fn: () => Promise<number>): Promise<number> {
+  let total = 0;
+  for (let i = 0; i < MAX_LOTES_POR_TICK; i++) {
+    let n: number;
+    try {
+      n = await fn();
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? '');
+      if (msg.includes('503')) { logger.info({ table: nome }, 'servidor pediu para esperar; encerrando o ciclo desta tabela'); break; }
+      throw err;
+    }
+    total += n;
+    if (n < BATCH_SIZE) break; // lote incompleto = alcancou o fim da tabela
+  }
+  return total;
+}
+
 async function tick(cfg: AgentConfig): Promise<void> {
   {
     running = true;
     const emDia: Record<string, boolean> = {}; // tabela sem lote novo neste tick = em dia
     try {
       try {
-        const persisted = await syncSales(cfg);
+        const persisted = await ateEsvaziar('sales', () => syncSales(cfg));
         emDia['sales'] = persisted === 0;
         if (persisted > 0) logger.info({ table: 'sales', persisted }, 'sync tick');
       } catch (err) {
@@ -456,14 +479,14 @@ async function tick(cfg: AgentConfig): Promise<void> {
       }
       if (SYNC_SALE_ITEMS_AND_PAYMENTS_ENABLED) {
         try {
-          const persisted = await syncSaleItems(cfg);
+          const persisted = await ateEsvaziar('saleItems', () => syncSaleItems(cfg));
           emDia['saleItems'] = persisted === 0;
           if (persisted > 0) logger.info({ table: 'saleItems', persisted }, 'sync tick');
         } catch (err) {
           logger.error({ err }, 'sync tick failed (saleItems)');
         }
         try {
-          const persisted = await syncPayments(cfg);
+          const persisted = await ateEsvaziar('payments', () => syncPayments(cfg));
           emDia['payments'] = persisted === 0;
           if (persisted > 0) logger.info({ table: 'payments', persisted }, 'sync tick');
         } catch (err) {
@@ -471,7 +494,7 @@ async function tick(cfg: AgentConfig): Promise<void> {
         }
       }
       try {
-        const persisted = await syncPayables(cfg);
+        const persisted = await ateEsvaziar('payables', () => syncPayables(cfg));
         emDia['payables'] = persisted === 0;
         if (persisted > 0) logger.info({ table: 'payables', persisted }, 'sync tick');
       } catch (err) {
@@ -480,7 +503,7 @@ async function tick(cfg: AgentConfig): Promise<void> {
       // D20 Conferencia de Caixa: fechamentos (pai) antes das especies (filhas resolvem FK)
       for (const [name, fn] of [['cashClosings', syncCashClosings], ['cashClosingSpecies', syncCashClosingSpecies], ['cardTransactions', syncCardTransactions]] as const) {
         try {
-          const persisted = await fn(cfg);
+          const persisted = await ateEsvaziar(name, () => fn(cfg));
           emDia[name] = persisted === 0;
           if (persisted > 0) logger.info({ table: name, persisted }, 'sync tick');
         } catch (err) {
@@ -488,7 +511,7 @@ async function tick(cfg: AgentConfig): Promise<void> {
         }
       }
       try {
-        const persisted = await syncReceivables(cfg);
+        const persisted = await ateEsvaziar('receivables', () => syncReceivables(cfg));
         emDia['receivables'] = persisted === 0;
         if (persisted > 0) logger.info({ table: 'receivables', persisted }, 'sync tick');
       } catch (err) {
