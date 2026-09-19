@@ -8,7 +8,7 @@
 // A bandeira SO existe no extrato do portal (o GDOOR guarda o adquirente, nao a bandeira),
 // entao este motor roda sobre as linhas do extrato — onde o dado e exato.
 export interface RegraTaxa {
-  acquirer: string;          // REDE | CIELO | SHIPAY ...
+  acquirer: string;          // REDE | CIELO ... (SHIPAY e integrador: vira REDE)
   bandeira: string | null;   // null = vale para qualquer bandeira do mesmo adquirente/modalidade
   modalidade: Modalidade;
   percent: number;           // taxa EFETIVA ja somada (ex.: 1,65 + 1,24 de antecipacao = 2,89)
@@ -70,14 +70,23 @@ const APELIDOS: Record<string, string> = {
 };
 const canonica = (b: string): string => APELIDOS[b] ?? b;
 
+// SHIPAY NAO E ADQUIRENTE (dono, 19/09): e so o sistema por onde o PIX passa; quem liquida e a
+// REDE, no Itau (o numero logico e da Rede). Qualquer lugar que receba "SHIPAY" — linha antiga do
+// portal, regra antiga, roteamento antigo — passa a ser tratado como REDE.
+const INTEGRADORES: Record<string, string> = { SHIPAY: 'REDE' };
+export function adquirenteCanonico(a: string | null | undefined): string {
+  const up = (a ?? '').toUpperCase().trim();
+  return INTEGRADORES[up] ?? up;
+}
+
 /** Regra mais especifica primeiro: bandeira exata > curinga do adquirente/modalidade. */
 export function escolherRegra(regras: RegraTaxa[], linha: LinhaExtratoTaxa, modalidade: Modalidade): RegraTaxa | null {
-  const adq = (linha.acquirer || '').toUpperCase();
+  const adq = adquirenteCanonico(linha.acquirer);
   const band = canonica(bandeiraBase(linha.bandeira));
   const parc = linha.parcelas ?? 1;
   const serve = (r: RegraTaxa): boolean => {
     if (r.ativo === false) return false;
-    if (r.acquirer.toUpperCase() !== adq) return false;
+    if (adquirenteCanonico(r.acquirer) !== adq) return false;
     if (r.modalidade !== modalidade) return false;
     if (r.parcelasDe != null && parc < r.parcelasDe) return false;
     if (r.parcelasAte != null && parc > r.parcelasAte) return false;
