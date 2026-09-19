@@ -1839,8 +1839,13 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     // O portal cobre a maquininha do TEF; as outras formas de cartao entram como 2a chance (D29).
     const canalDe = (p: (typeof pags)[number]) => feeChannel(p.especie, p.paymentType);
     const cartao = pags.filter((p) => { const c = canalDe(p); return c != null && c.endsWith('debito') || c != null && c.endsWith('credito'); });
-    const tef = cartao.filter((p) => canalDe(p)?.startsWith('tef_')).map(comoPagamento);
-    const outrasFormas = cartao.filter((p) => !canalDe(p)?.startsWith('tef_')).map(comoPagamento);
+    // ESTORNO NAO CONCILIA (19/09): o GDOOR grava a devolucao de TEF como lancamento NEGATIVO
+    // (ex.: TEF DEBITO -95,46). O portal so lista cobranca autorizada, entao o negativo sempre
+    // caia em "so no sistema" como se fosse venda sem repasse. Sai da comparacao e aparece a parte.
+    const positivos = cartao.filter((p) => Number(p.value) > 0);
+    const estornos = cartao.filter((p) => Number(p.value) < 0);
+    const tef = positivos.filter((p) => canalDe(p)?.startsWith('tef_')).map(comoPagamento);
+    const outrasFormas = positivos.filter((p) => !canalDe(p)?.startsWith('tef_')).map(comoPagamento);
 
     // Fronteira do sync: o ultimo dia que TEM pagamento na nuvem pode estar pela metade
     // (o agente anda por ID crescente). Desse dia em diante nao se julga nada.
@@ -1873,6 +1878,11 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       ...resultado,
       // so os problemas — a lista inteira pode ter milhares de linhas
       problemas: resultado.itens.filter((i) => i.estado !== 'conciliado').slice(0, 200),
+      estornosSistema: {
+        qtd: estornos.length,
+        valor: estornos.reduce((a, p) => a + Number(p.value), 0),
+        itens: estornos.slice(0, 50).map(comoPagamento),
+      },
       meta,
     };
   });
