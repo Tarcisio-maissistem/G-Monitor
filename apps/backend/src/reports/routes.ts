@@ -8,7 +8,8 @@ import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
 import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
-import { coletar, CredencialInvalida, PortalMudou } from '../conciliacao/getcard.js';
+import { CredencialInvalida, PortalMudou } from '../conciliacao/getcard.js';
+import { extratoDoPeriodo } from '../conciliacao/extratoCache.js';
 import { conciliar } from '../conciliacao/matcher.js';
 import { calcularCusto, escolherRegra, modalidadeDaBandeira, adquirenteCanonico, type RegraTaxa } from '../conciliacao/taxas.js';
 import { open, isSealed } from '../lib/secretBox.js';
@@ -1752,7 +1753,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
 
     if (g.user && isSealed(g.senha)) {
       try {
-        const { linhas: extrato } = await coletar({ user: g.user, password: open(g.senha!), from, to: dia });
+        // cache por dia: so vai ao portal pelo que ainda nao foi baixado (ou pelo dia de hoje)
+        const { linhas: extrato } = await extratoDoPeriodo({ tenantId, user: g.user, password: open(g.senha!), from, to: dia });
         extratoOk = true;
         for (const linha of extrato) {
           if (!linha.autorizada) continue;
@@ -1821,7 +1823,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const iso = (d: Date): string => d.toISOString().slice(0, 10);
     let extrato;
     try {
-      extrato = await coletar({ user: g.user, password: open(g.senha!), from: iso(from), to: iso(to) });
+      // cache por dia (19/09): dia fechado vem do banco; so os que faltam vao ao portal
+      extrato = await extratoDoPeriodo({ tenantId, user: g.user, password: open(g.senha!), from: iso(from), to: iso(to) });
     } catch (err) {
       if (err instanceof CredencialInvalida) throw Errors.validation('O portal recusou o login. Confira usuario e senha em Conciliacao.');
       if (err instanceof PortalMudou) {
@@ -1888,7 +1891,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       fronteiraSync: fronteira ?? null,
       custo,
       regrasCadastradas: regras.length,
-      extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas },
+      extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas, diasDoArquivo: extrato.cache.doArquivo, diasDoPortal: extrato.cache.doPortal },
       ...resultado,
       // so os problemas — a lista inteira pode ter milhares de linhas
       problemas: resultado.itens.filter((i) => i.estado !== 'conciliado').slice(0, 200),

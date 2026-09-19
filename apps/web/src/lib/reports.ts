@@ -319,7 +319,7 @@ export interface ExtratoResponse {
   fronteiraSync: string | null;
   custo: ResumoCusto;          // custo EXATO por bandeira (o extrato traz a bandeira)
   regrasCadastradas: number; // ultimo dia sincronizado: dele em diante nada e julgado
-  extrato: { linhas: number; autorizadas: number; paginas: number };
+  extrato: { linhas: number; autorizadas: number; paginas: number; diasDoArquivo?: number; diasDoPortal?: number };
   porDia: ConciliacaoDia[];
   totais: {
     extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number;
