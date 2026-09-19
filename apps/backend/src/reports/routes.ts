@@ -8,7 +8,7 @@ import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
 import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
-import { coletar, CredencialInvalida } from '../conciliacao/getcard.js';
+import { coletar, CredencialInvalida, PortalMudou } from '../conciliacao/getcard.js';
 import { conciliar } from '../conciliacao/matcher.js';
 import { calcularCusto, escolherRegra, modalidadeDaBandeira, type RegraTaxa } from '../conciliacao/taxas.js';
 import { open, isSealed } from '../lib/secretBox.js';
@@ -72,9 +72,11 @@ const emVoo = new Map<string, Promise<unknown>>();
 // na virada de meia-noite a chave muda mesmo sem sync, senao o payload de ontem viraria hoje.
 // Sem datav (Redis reiniciado / tenant nunca sincronizou) cai no TTL curto de 600s de sempre.
 const DATA_VERSION_CACHE_TTL_SECONDS = 24 * 3600;
-// Cada subida do backend (deploy) troca o BOOT_ID e invalida tudo: a correcao da NFC-e 2x
-// (PR #111) ficou 24h escondida atras do cache ate alguem mexer na meta (achado 04/09).
-const BOOT_ID = Date.now().toString(36);
+// Versao do CALCULO (nao do boot): so mude esta string quando a formula de algum relatorio
+// mudar — ai o cache velho e ignorado. Usar o horario do boot, como estava antes, invalidava
+// tudo a cada restart e obrigava o Postgres a recalcular os relatorios pesados no pior momento
+// (04/09: dashboard estourando 60 s depois de cada deploy).
+const CALC_VERSION = 'c3';
 export async function marcarDadosNovos(tenantId: string): Promise<void> {
   try {
     await redis.set(`datav:${tenantId}`, String(Date.now()));
@@ -93,7 +95,7 @@ function cached<Req extends FastifyRequest>(reportId: string, handler: (req: Req
       // sem datav segue no TTL curto
     }
     const hoje = new Date().toISOString().slice(0, 10);
-    const key = `report:${BOOT_ID}:${tenantId}:${datav ?? 'v0'}:${hoje}:${reportId}:${JSON.stringify(req.query)}`;
+    const key = `report:${CALC_VERSION}:${tenantId}:${datav ?? 'v0'}:${hoje}:${reportId}:${JSON.stringify(req.query)}`;
     try {
       const hit = await redis.get(key);
       if (hit) return JSON.parse(hit);
@@ -1808,6 +1810,10 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       extrato = await coletar({ user: g.user, password: open(g.senha!), from: iso(from), to: iso(to) });
     } catch (err) {
       if (err instanceof CredencialInvalida) throw Errors.validation('O portal recusou o login. Confira usuario e senha em Conciliacao.');
+      if (err instanceof PortalMudou) {
+        logger.error({ err }, 'getcard: portal respondeu fora do padrao (layout/endereco mudou?)');
+        throw Errors.validation('O portal da maquininha mudou e o extrato nao pode ser lido agora. O suporte ja foi avisado pelo log.');
+      }
       logger.error({ err }, 'getcard: falha ao coletar extrato');
       throw Errors.validation('Nao consegui falar com o portal agora. Tente de novo em alguns minutos.');
     }

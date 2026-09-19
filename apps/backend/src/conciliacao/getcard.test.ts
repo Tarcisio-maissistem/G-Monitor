@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseLinhas, separarAdquirente, valorBr, dataHoraBr, totalPaginas } from './getcard.js';
+import { ehRelatorio } from './getcard.js';
 
 // Linhas REAIS do portal (coletadas em 27/08 com a conta do dono) — se o portal mudar o
 // layout, este teste quebra antes de a conciliacao mentir em producao.
@@ -53,5 +54,15 @@ describe('getcard parser', () => {
 
   it('ignora HTML sem tabela em vez de estourar', () => {
     expect(parseLinhas('<html>login</html>')).toEqual([]);
+  });
+});
+
+describe('portal Scope (set/2026): reconhecer a pagina do relatorio', () => {
+  it('tabela com cabecalho NSU e relatorio, mesmo sem nenhuma linha', () => {
+    expect(ehRelatorio('<table><thead><tr><th>#</th><th>PDV</th><th>NSU</th></tr></thead><tbody></tbody></table>')).toBe(true);
+  });
+  it('404 curto ou pagina de login NAO e relatorio (antes virava "zero vendas" calado)', () => {
+    expect(ehRelatorio('{}')).toBe(false);
+    expect(ehRelatorio('<form><input name="user"><input name="password"></form>')).toBe(false);
   });
 });

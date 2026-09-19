@@ -3,7 +3,10 @@
 // O portal NAO tem API. O botao "CSV" e do DataTables (monta o arquivo no navegador), mas a
 // TABELA vem renderizada pelo servidor — entao a coleta e HTTP puro, sem navegador headless
 // no VPS. Fluxo validado ponta a ponta em 27/08 com a conta do dono.
-const BASE = 'https://relatoriodevendas.com.br/index.php';
+// Portal "Scope" (setembro/2026): o endereco perdeu o prefixo /index.php/admin, o login
+// deixou de ter CSRF e a busca virou GET com o periodo na URL. As paginas (e a tabela) sao
+// as mesmas. Em 19/09 o coletor antigo recebia 404 e devolvia ZERO transacoes em silencio.
+const BASE = 'https://relatoriodevendas.com.br';
 
 export interface GetcardRow {
   pdv: string;
@@ -81,6 +84,16 @@ export class CredencialInvalida extends Error {
   constructor() { super('credencial_invalida'); this.name = 'CredencialInvalida'; }
 }
 
+/** O portal respondeu algo que NAO e a tabela de vendas (404, pagina nova, manutencao). */
+export class PortalMudou extends Error {
+  constructor(detalhe: string) { super(`portal_mudou: ${detalhe}`); this.name = 'PortalMudou'; }
+}
+
+// A pagina do relatorio SEMPRE traz o cabecalho da tabela, mesmo sem nenhuma venda no periodo.
+// Sem ele, a resposta nao e o relatorio — e tratar isso como "zero vendas" acusaria a adquirente
+// de nao ter repassado nada (D25). Por isso falha alto em vez de devolver lista vazia.
+export const ehRelatorio = (html: string): boolean => /<th[^>]*>\s*NSU\s*<\/th>/i.test(html);
+
 /**
  * Baixa as transacoes do periodo. Lanca CredencialInvalida quando o portal devolve a tela de
  * login em vez do relatorio — NUNCA devolve lista vazia nesse caso: "vazio" seria lido como
@@ -111,21 +124,23 @@ export async function coletar(opts: {
     guardar(r); return r.text();
   };
 
-  // 1) pagina de login -> cookie CSRF + token
-  let html = await get(`${BASE}/admin/a/login?code=GETCARD`);
-  // 2) autentica
-  html = await post(`${BASE}/admin/a/login?code=GETCARD`, new URLSearchParams({
-    csrf_test_name: csrfDo(html), user: opts.user, password: opts.password,
-  }));
-  // 3) tela do relatorio (traz um CSRF novo)
-  html = await get(`${BASE}/admin/vendas/filtroTodasAsVendas`);
+  // 1) pagina de login (cookie de sessao; CSRF so se o portal ainda mandar)
+  let html = await get(`${BASE}/a/login?code=GETCARD`);
+  // 2) autentica — o portal novo nao usa CSRF, mas mandar quando existe nao atrapalha
+  const login = new URLSearchParams({ user: opts.user, password: opts.password });
+  const csrf = csrfDo(html);
+  if (csrf) login.set('csrf_test_name', csrf);
+  html = await post(`${BASE}/a/login?code=GETCARD`, login);
   if (/name="password"/.test(html)) throw new CredencialInvalida();
 
+  // 3) relatorio do periodo: GET com os filtros na URL (antes era POST com CSRF)
   const periodo = `${ddmmaaaa(opts.from)} - ${ddmmaaaa(opts.to)}`;
-  html = await post(`${BASE}/admin/vendas/filtroTodasAsVendas`, new URLSearchParams({
-    csrf_test_name: csrfDo(html), periodo, numeroRegistro: '100',
-  }));
+  const urlDa = (p: number): string =>
+    `${BASE}/vendas/filtroTodasAsVendas?nsu=&pdv=&periodo=${encodeURIComponent(periodo)}`
+    + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu${p > 1 ? `&page=${p}` : ''}`;
+  html = await get(urlDa(1));
   if (/name="password"/.test(html)) throw new CredencialInvalida();
+  if (!ehRelatorio(html)) throw new PortalMudou(`pagina de vendas sem a tabela (${html.length} bytes)`);
 
   let linhas = parseLinhas(html);
   const paginas = Math.min(totalPaginas(html), opts.maxPaginas ?? 60);
@@ -134,15 +149,16 @@ export async function coletar(opts: {
   // inteiro (29 paginas) e estourava o tempo do gateway; em blocos cai pra ~20s. 4 e um meio
   // termo deliberado: acelera sem martelar o portal do fornecedor.
   const LOTE = 4;
-  const urlDa = (p: number): string =>
-    `${BASE}/admin/vendas/filtroTodasAsVendas?&periodo=${encodeURIComponent(periodo)}`
-    + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu&page=${p}`;
 
   for (let inicio = 2; inicio <= paginas; inicio += LOTE) {
     const bloco: number[] = [];
     for (let p = inicio; p < inicio + LOTE && p <= paginas; p++) bloco.push(p);
     const htmls = await Promise.all(bloco.map((p) => get(urlDa(p))));
-    for (const h of htmls) linhas = linhas.concat(parseLinhas(h));
+    for (const h of htmls) {
+      // pagina do meio que vem sem a tabela = extrato incompleto; nunca somar pela metade
+      if (!ehRelatorio(h)) throw new PortalMudou('pagina intermediaria sem a tabela');
+      linhas = linhas.concat(parseLinhas(h));
+    }
   }
   return { linhas, paginas };
 }
