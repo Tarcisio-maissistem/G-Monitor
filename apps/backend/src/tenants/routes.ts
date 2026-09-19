@@ -71,7 +71,7 @@ const adquirenteSchema = z.object({
 });
 
 // Adquirente PRINCIPAL por modalidade (roteamento do dono 01/09):
-// debito->REDE/Itau, credito->CIELO/Bradesco, pix->SHIPAY/Itau, beneficio->CIELO.
+// debito->REDE/Itau, credito->CIELO/Bradesco, pix->REDE/Itau (via Shipay), beneficio->CIELO.
 const roteamentoSchema = z.object({
   debito: z.string().max(20).optional(),
   credito: z.string().max(20).optional(),

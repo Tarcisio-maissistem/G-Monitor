@@ -10,7 +10,7 @@ import { buildCashflow, buildForecast, pickGranularity, type Granularity } from 
 import { feeChannel, FEE_CHANNELS, normalizePaymentType } from './paymentType.js';
 import { coletar, CredencialInvalida, PortalMudou } from '../conciliacao/getcard.js';
 import { conciliar } from '../conciliacao/matcher.js';
-import { calcularCusto, escolherRegra, modalidadeDaBandeira, type RegraTaxa } from '../conciliacao/taxas.js';
+import { calcularCusto, escolherRegra, modalidadeDaBandeira, adquirenteCanonico, type RegraTaxa } from '../conciliacao/taxas.js';
 import { open, isSealed } from '../lib/secretBox.js';
 
 // P4 (26/08, confirmado no Firebird do piloto): a venda de REGISTRO e o PV (pre-venda) e a
@@ -1607,13 +1607,27 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       getFreshnessMeta(tenantId, storeId),
     ]);
 
-    interface FeeRule { channel: string; acquirer?: string | null; installments?: number | null; percent: number; fixedValue?: number; daysToReceive?: number }
-    const rules = (((tenant?.meta ?? {}) as Record<string, unknown>).feeRules ?? []) as FeeRule[];
-    // Regra mais especifica ganha. O adquirente (Cielo/Rede) so existe em MOVIMENTACAO_CARTAO,
-    // que ainda nao e sincronizada (Fase 1) — por enquanto casa so as regras curinga.
-    const pickRule = (channel: string): FeeRule | undefined =>
-      rules.filter((r) => r.channel === channel).sort((a, b) => (a.acquirer ? -1 : 1) - (b.acquirer ? -1 : 1))
-        .find((r) => !r.acquirer);
+    // FONTE UNICA DE TAXA (19/09): este relatorio lia meta.feeRules, a tabela antiga, enquanto o
+    // extrato e o "deve cair no banco" usam meta.taxasAdquirente — a tela de "Adquirentes e taxas".
+    // A correcao foi anunciada na auditoria de 04/09 mas o replace nao casou e ninguem conferiu.
+    // Canal -> modalidade; adquirente pelo roteamento; taxa = curinga (bandeira vazia) ou a MEDIA
+    // das bandeiras ativas daquele adquirente/modalidade (o GDOOR nao guarda a bandeira).
+    interface FeeRule { percent: number; fixedValue?: number | undefined; daysToReceive?: number | undefined }
+    const metaT = (tenant?.meta ?? {}) as Record<string, unknown>;
+    const regrasAdq = (metaT.taxasAdquirente ?? []) as RegraTaxa[];
+    const rot = (metaT.roteamento ?? {}) as Record<string, string>;
+    const modalidadeDoCanal = (ch: string): 'debito' | 'credito' | 'pix' => (ch.includes('debito') ? 'debito' : ch.includes('credito') ? 'credito' : 'pix');
+    const pickRule = (channel: string): FeeRule | undefined => {
+      const mod = modalidadeDoCanal(channel);
+      const adq = adquirenteCanonico(rot[mod] ?? (mod === 'credito' ? 'CIELO' : 'REDE'));
+      const ativas = regrasAdq.filter((r) => r.ativo !== false && r.modalidade === mod && adquirenteCanonico(r.acquirer) === adq);
+      if (!ativas.length) return undefined;
+      const curinga = ativas.find((r) => !r.bandeira);
+      if (curinga) return { percent: curinga.percent, fixedValue: curinga.fixedValue, daysToReceive: curinga.daysToReceive };
+      const media = ativas.reduce((a, r) => a + r.percent, 0) / ativas.length;
+      return { percent: +media.toFixed(4), fixedValue: 0, daysToReceive: ativas[0]!.daysToReceive };
+    };
+    const rules = regrasAdq;
 
     const acc = new Map<string, { bruto: number; transacoes: number }>();
     let semCanal = 0; // dinheiro/crediario: nao tem taxa de adquirente, nem entra na conta
@@ -1708,7 +1722,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const regras = (meta.taxasAdquirente ?? []) as RegraTaxa[];
     const fichas = (meta.adquirentes ?? []) as Array<{ nome: string; banco: string }>;
     const roteamento = (meta.roteamento ?? {}) as Record<string, string>;
-    const bancoDe = (acq: string): string => fichas.find((f) => f.nome.toUpperCase() === acq.toUpperCase())?.banco || '(banco não cadastrado)';
+    const bancoDe = (acq: string): string => fichas.find((f) => adquirenteCanonico(f.nome) === adquirenteCanonico(acq))?.banco || '(banco não cadastrado)';
 
     // dias uteis: pula sabado/domingo (feriado nao entra — o deposito atrasa 1 dia nesses casos)
     const addUteis = (iso: string, n: number): string => {
@@ -1773,7 +1787,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       pix.bruto += Number(gr._sum.value ?? 0); pix.transacoes += gr._count;
     }
     if (pix.transacoes > 0) {
-      const adqPix = roteamento.pix ?? 'SHIPAY';
+      const adqPix = adquirenteCanonico(roteamento.pix ?? 'REDE'); // Shipay e so o integrador; liquida na Rede
       const regraPix = regras.find((r) => r.ativo !== false && r.modalidade === 'pix' && r.acquirer.toUpperCase() === adqPix.toUpperCase());
       const taxa = (pix.bruto * (regraPix?.percent ?? 0)) / 100;
       const d = dep(bancoDe(adqPix));

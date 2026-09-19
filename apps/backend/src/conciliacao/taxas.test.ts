@@ -95,3 +95,17 @@ describe('beneficio e regra inativa (config 01/09)', () => {
     expect(r.taxa).toBeCloseTo(3.5);
   });
 });
+
+describe('Shipay e integrador, nao adquirente (dono 19/09)', () => {
+  it('linha do portal marcada SHIPAY usa a regra de PIX da REDE', () => {
+    const regras = [{ acquirer: 'REDE', bandeira: null, modalidade: 'pix' as const, percent: 0, ativo: true }];
+    const r = calcularCusto([{ acquirer: 'SHIPAY', bandeira: 'PIX', valor: 100 }], regras);
+    expect(r.semRegra.transacoes).toBe(0);
+    expect(r.taxa).toBe(0);
+  });
+  it('regra antiga cadastrada como SHIPAY continua valendo para a REDE', () => {
+    const regras = [{ acquirer: 'SHIPAY', bandeira: null, modalidade: 'pix' as const, percent: 0.5, ativo: true }];
+    const r = calcularCusto([{ acquirer: 'REDE', bandeira: 'PIX', valor: 200 }], regras);
+    expect(r.taxa).toBeCloseTo(1);
+  });
+});
