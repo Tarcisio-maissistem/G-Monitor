@@ -95,13 +95,14 @@ export class PortalMudou extends Error {
 export const ehRelatorio = (html: string): boolean => /<th[^>]*>\s*NSU\s*<\/th>/i.test(html);
 
 /**
- * Baixa as transacoes do periodo. Lanca CredencialInvalida quando o portal devolve a tela de
- * login em vez do relatorio — NUNCA devolve lista vazia nesse caso: "vazio" seria lido como
- * "a adquirente nao repassou nada" e acusaria a adquirente injustamente (D25).
+ * Abre UMA sessao no portal e devolve um "listar(periodo)" reutilizavel — o cache por dia busca
+ * varios dias soltos sem refazer o login a cada um. Lanca CredencialInvalida quando o portal
+ * devolve a tela de login e PortalMudou quando a resposta nao e o relatorio: NUNCA devolve lista
+ * vazia nesses casos ("vazio" acusaria a adquirente de nao ter repassado nada — D25).
  */
-export async function coletar(opts: {
-  user: string; password: string; from: string; to: string; maxPaginas?: number;
-}): Promise<{ linhas: GetcardRow[]; paginas: number }> {
+export async function sessaoPortal(opts: { user: string; password: string; maxPaginas?: number }): Promise<{
+  listar: (from: string, to: string) => Promise<{ linhas: GetcardRow[]; paginas: number }>;
+}> {
   const cookies = new Map<string, string>();
   const jar = (): string => [...cookies].map(([k, v]) => `${k}=${v}`).join('; ');
   const guardar = (r: Response): void => {
@@ -111,9 +112,19 @@ export async function coletar(opts: {
       if (i > 0) cookies.set(kv.slice(0, i), kv.slice(i + 1));
     }
   };
+  // O portal as vezes derruba a conexao (visto 19/09: "fetch failed: read ETIMEDOUT" com volume
+  // alto no dia). Queda de REDE tenta de novo ate 3x com espera crescente; resposta HTTP recebida
+  // (mesmo errada) nao repete — essa quem julga e o ehRelatorio/CredencialInvalida.
   const get = async (url: string): Promise<string> => {
-    const r = await fetch(url, { headers: { cookie: jar() }, redirect: 'follow' });
-    guardar(r); return r.text();
+    for (let tentativa = 1; ; tentativa++) {
+      try {
+        const r = await fetch(url, { headers: { cookie: jar() }, redirect: 'follow', signal: AbortSignal.timeout(45_000) });
+        guardar(r); return await r.text();
+      } catch (err) {
+        if (tentativa >= 3) throw err;
+        await new Promise((ok) => setTimeout(ok, 2_000 * tentativa));
+      }
+    }
   };
   const post = async (url: string, body: URLSearchParams): Promise<string> => {
     const r = await fetch(url, {
@@ -133,32 +144,39 @@ export async function coletar(opts: {
   html = await post(`${BASE}/a/login?code=GETCARD`, login);
   if (/name="password"/.test(html)) throw new CredencialInvalida();
 
-  // 3) relatorio do periodo: GET com os filtros na URL (antes era POST com CSRF)
-  const periodo = `${ddmmaaaa(opts.from)} - ${ddmmaaaa(opts.to)}`;
-  const urlDa = (p: number): string =>
-    `${BASE}/vendas/filtroTodasAsVendas?nsu=&pdv=&periodo=${encodeURIComponent(periodo)}`
-    + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu${p > 1 ? `&page=${p}` : ''}`;
-  html = await get(urlDa(1));
-  if (/name="password"/.test(html)) throw new CredencialInvalida();
-  if (!ehRelatorio(html)) throw new PortalMudou(`pagina de vendas sem a tabela (${html.length} bytes)`);
+  const listar = async (from: string, to: string): Promise<{ linhas: GetcardRow[]; paginas: number }> => {
+    // 3) relatorio do periodo: GET com os filtros na URL (antes era POST com CSRF)
+    const periodo = `${ddmmaaaa(from)} - ${ddmmaaaa(to)}`;
+    const urlDa = (p: number): string =>
+      `${BASE}/vendas/filtroTodasAsVendas?nsu=&pdv=&periodo=${encodeURIComponent(periodo)}`
+      + `&numeroRegistro=100&ordernar2=crescente&ordernar1=nsu${p > 1 ? `&page=${p}` : ''}`;
+    const primeira = await get(urlDa(1));
+    if (/name="password"/.test(primeira)) throw new CredencialInvalida();
+    if (!ehRelatorio(primeira)) throw new PortalMudou(`pagina de vendas sem a tabela (${primeira.length} bytes)`);
 
-  let linhas = parseLinhas(html);
-  const paginas = Math.min(totalPaginas(html), opts.maxPaginas ?? 60);
-
-  // Paginas 2..N em blocos de 4 em paralelo. Sequencial com 200ms de pausa levava ~90s no mes
-  // inteiro (29 paginas) e estourava o tempo do gateway; em blocos cai pra ~20s. 4 e um meio
-  // termo deliberado: acelera sem martelar o portal do fornecedor.
-  const LOTE = 4;
-
-  for (let inicio = 2; inicio <= paginas; inicio += LOTE) {
-    const bloco: number[] = [];
-    for (let p = inicio; p < inicio + LOTE && p <= paginas; p++) bloco.push(p);
-    const htmls = await Promise.all(bloco.map((p) => get(urlDa(p))));
-    for (const h of htmls) {
-      // pagina do meio que vem sem a tabela = extrato incompleto; nunca somar pela metade
-      if (!ehRelatorio(h)) throw new PortalMudou('pagina intermediaria sem a tabela');
-      linhas = linhas.concat(parseLinhas(h));
+    let linhas = parseLinhas(primeira);
+    const paginas = Math.min(totalPaginas(primeira), opts.maxPaginas ?? 60);
+    // Paginas 2..N em blocos de 4 em paralelo: acelera sem martelar o portal do fornecedor.
+    const LOTE = 4;
+    for (let inicio = 2; inicio <= paginas; inicio += LOTE) {
+      const bloco: number[] = [];
+      for (let p = inicio; p < inicio + LOTE && p <= paginas; p++) bloco.push(p);
+      const htmls = await Promise.all(bloco.map((p) => get(urlDa(p))));
+      for (const h of htmls) {
+        // pagina do meio que vem sem a tabela = extrato incompleto; nunca somar pela metade
+        if (!ehRelatorio(h)) throw new PortalMudou('pagina intermediaria sem a tabela');
+        linhas = linhas.concat(parseLinhas(h));
+      }
     }
-  }
-  return { linhas, paginas };
+    return { linhas, paginas };
+  };
+  return { listar };
+}
+
+/** Atalho de uma consulta so (login + um periodo). */
+export async function coletar(opts: {
+  user: string; password: string; from: string; to: string; maxPaginas?: number;
+}): Promise<{ linhas: GetcardRow[]; paginas: number }> {
+  const s = await sessaoPortal(opts);
+  return s.listar(opts.from, opts.to);
 }

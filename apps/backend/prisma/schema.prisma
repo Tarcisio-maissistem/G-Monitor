@@ -552,3 +552,43 @@ model NotificationPreference {
   @@unique([userId, type])
   @@map("notification_preferences")
 }
+
+// Extrato do portal da maquininha guardado POR DIA DE CONSULTA (19/09, pedido do dono: dia que ja
+// passou nao muda, entao baixa uma vez so). O dia da consulta e o filtro do portal; a data que o
+// conciliador usa (D/H Estabelecimento) fica em `data` e pode cair no dia anterior — por isso a
+// chave e o dia consultado, nunca a data da linha.
+model GetcardLinha {
+  id          String   @id @default(cuid())
+  tenantId    String
+  dia         DateTime @db.Date   // dia consultado no portal
+  pdv         String
+  nsu         String
+  cartao      String
+  parcelas    Int
+  valor       Decimal  @db.Decimal(14, 2)
+  adquirente  String
+  bandeira    String
+  data        String   // 'YYYY-MM-DD' da coluna D/H Estabelecimento
+  hora        String
+  nsuHost     String
+  autorizacao String
+  status      String
+  autorizada  Boolean
+
+  @@index([tenantId, dia])
+  @@map("getcard_linhas")
+}
+
+// Um registro por dia ja baixado. fechado=true so quando foi baixado DEPOIS de o dia acabar
+// (horario de Brasilia): dia baixado ainda em andamento e buscado de novo na proxima consulta.
+model GetcardDia {
+  tenantId  String
+  dia       DateTime @db.Date
+  qtd       Int
+  paginas   Int
+  fechado   Boolean
+  baixadoEm DateTime @default(now())
+
+  @@id([tenantId, dia])
+  @@map("getcard_dias")
+}

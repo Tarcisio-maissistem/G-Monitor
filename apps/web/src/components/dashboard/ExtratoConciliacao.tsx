@@ -36,6 +36,8 @@ function juntar(partes: ExtratoResponse[]): ExtratoResponse {
       linhas: partes.reduce((a, p) => a + p.extrato.linhas, 0),
       autorizadas: partes.reduce((a, p) => a + p.extrato.autorizadas, 0),
       paginas: partes.reduce((a, p) => a + p.extrato.paginas, 0),
+      diasDoArquivo: partes.reduce((a, p) => a + (p.extrato.diasDoArquivo ?? 0), 0),
+      diasDoPortal: partes.reduce((a, p) => a + (p.extrato.diasDoPortal ?? 0), 0),
     },
     porDia: partes.flatMap((p) => p.porDia),
     diasIgnorados: partes.flatMap((p) => p.diasIgnorados),
@@ -172,6 +174,8 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
           <p className="text-[11px] text-slate-400">
             Extrato: {formatInt(res.extrato.autorizadas)} transações autorizadas ({formatInt(res.extrato.linhas)} lidas, {res.extrato.paginas} páginas) ·
             {' '}Sistema: {formatInt(res.totais.sistemaQtd)} pagamentos de cartão.
+            {/* dia fechado vem do arquivo (baixado uma vez so); so o que falta vai ao portal */}
+            {res.extrato.diasDoArquivo != null && ` Dias: ${res.extrato.diasDoArquivo} do arquivo, ${res.extrato.diasDoPortal ?? 0} buscados agora no portal.`}
           </p>
         </div>
       )}
