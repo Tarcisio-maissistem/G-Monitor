@@ -122,6 +122,25 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     return callAgent(agent.id, 'runReport', { reportId: body.reportId, params: body.params }, 25_000);
   });
 
+  // Religa pagamentos orfaos as vendas, em LOTE PEQUENO e sob demanda (super-admin). Fora do
+  // caminho do sync de proposito: no sync isso travava o banco (04/09).
+  app.post<{ Params: { id: string } }>('/api/admin/agents/:id/relink-payments', { preHandler: [requireAuth, requireSuperAdmin] }, async (req) => {
+    const body = z.object({ limit: z.number().int().min(100).max(5000).default(2000) }).parse(req.body ?? {});
+    const agent = await prisma.agent.findFirst({ where: { id: req.params.id, revokedAt: null } });
+    if (!agent) throw Errors.notFound('Agente nao encontrado');
+    const religados = await prisma.$executeRaw`
+      UPDATE payments p SET "saleId" = s.id
+      FROM sales s
+      WHERE p.id IN (
+        SELECT p2.id FROM payments p2
+        WHERE p2."tenantId" = ${agent.tenantId} AND p2."storeId" = ${agent.storeId}
+          AND p2."saleId" IS NULL AND p2."saleSourceId" IS NOT NULL
+        LIMIT ${body.limit}
+      )
+      AND s."tenantId" = p."tenantId" AND s."storeId" = p."storeId" AND s."sourceId" = p."saleSourceId"`;
+    return { religados };
+  });
+
   app.post('/api/agents/sync-now', { preHandler: [requireAuth, requireCapability('reports.view')] }, async (req, reply) => {
     const tenantId = req.user!.tenantId;
     const ultimo = ultimoSyncNow.get(tenantId) ?? 0;

@@ -245,19 +245,10 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             updatedAt: new Date(),
           })),
         );
-        // Religa pagamentos que chegaram antes destas vendas (saleId NULL, saleSourceId conhecido).
-        {
-          const ids = [...new Set(body.rows.map((r) => String(r.sourceId)))];
-          if (ids.length) {
-            const religados = await prismaSync.$executeRaw`
-              UPDATE payments p SET "saleId" = s.id
-              FROM sales s
-              WHERE p."tenantId" = ${ctx.tenantId} AND p."storeId" = ${ctx.storeId} AND p."saleId" IS NULL
-                AND p."saleSourceId" = s."sourceId" AND s."tenantId" = p."tenantId" AND s."storeId" = p."storeId"
-                AND s."sourceId" IN (${Prisma.join(ids)})`;
-            if (religados > 0) logger.info({ tenantId: ctx.tenantId, religados }, 'pagamentos religados a vendas');
-          }
-        }
+        // NAO religar aqui (04/09): este UPDATE rodava a cada lote de vendas e, com 195 mil
+        // pagamentos quase todos de saleSourceId NULL, o Postgres varria a tabela inteira —
+        // statement timeout de 2 min e o painel inteiro travava (login levou 39 s). O religamento
+        // agora e uma tarefa administrativa em lotes: POST /api/admin/agents/:id/relink-payments.
         break;
 
       case 'saleItems': {
