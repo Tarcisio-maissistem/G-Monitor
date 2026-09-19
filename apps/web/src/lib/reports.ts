@@ -328,6 +328,8 @@ export interface ExtratoResponse {
   };
   diasIgnorados: string[];
   problemas: ItemConciliado[];
+  // Devolucao de TEF no GDOOR (lancamento negativo): nao entra na comparacao com o portal
+  estornosSistema?: { qtd: number; valor: number; itens: PagamentoSistema[] };
   meta: FreshnessMeta;
 }
 export interface IntegracoesResponse { getcard: { user: string | null; temSenha: boolean } }

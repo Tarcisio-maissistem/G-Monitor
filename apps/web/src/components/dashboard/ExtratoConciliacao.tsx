@@ -40,6 +40,11 @@ function juntar(partes: ExtratoResponse[]): ExtratoResponse {
     porDia: partes.flatMap((p) => p.porDia),
     diasIgnorados: partes.flatMap((p) => p.diasIgnorados),
     problemas: partes.flatMap((p) => p.problemas),
+    estornosSistema: {
+      qtd: partes.reduce((a, p) => a + (p.estornosSistema?.qtd ?? 0), 0),
+      valor: partes.reduce((a, p) => a + (p.estornosSistema?.valor ?? 0), 0),
+      itens: partes.flatMap((p) => p.estornosSistema?.itens ?? []),
+    },
     totais: {
       extratoQtd: soma((t) => t.extratoQtd), extratoValor: soma((t) => t.extratoValor),
       sistemaQtd: soma((t) => t.sistemaQtd), sistemaValor: soma((t) => t.sistemaValor),
@@ -142,7 +147,8 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
                       <div className="text-[11px] text-slate-500 truncate">
                         {formatBrDate(p.data)}
                         {p.extrato ? ` · ${p.extrato.hora} · PDV ${p.extrato.pdv} · ${p.extrato.adquirente} · NSU ${p.extrato.nsu} · aut ${p.extrato.autorizacao}` : ''}
-                        {p.sistema ? ` · ${p.sistema.hora} · ${p.sistema.forma}` : ''}
+                        {/* pagamento do sistema so tem DATA; o "03:00" era meia-noite no fuso, nao horario real */}
+                        {p.sistema ? ` · ${p.sistema.forma}` : ''}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -153,6 +159,14 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
                 ))}
               </div>
             </div>
+          )}
+
+          {(res.estornosSistema?.qtd ?? 0) > 0 && (
+            <p className="text-[11px] text-slate-500">
+              ↩ {res.estornosSistema!.qtd} estorno(s) de TEF no GDOOR ({formatBRL(res.estornosSistema!.valor)}) ficaram fora da comparação:
+              {' '}{res.estornosSistema!.itens.slice(0, 5).map((e) => `${formatBrDate(e.data)} ${formatBRL(e.valor)} ${e.forma}`).join(' · ')}.
+              O portal só lista cobranças autorizadas, então devolução nunca tem par lá.
+            </p>
           )}
 
           <p className="text-[11px] text-slate-400">
