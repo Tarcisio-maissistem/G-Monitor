@@ -380,3 +380,46 @@ export interface ResumoCusto {
   semRegra: { bruto: number; transacoes: number };
   porBandeira: CustoPorBandeira[];
 }
+
+// ─── Operadores de caixa (24/09, openspec/changes/operadores-caixa) ─────────────────────
+export type TipoOcorrencia = 'cancelada' | 'sem_itens' | 'pre_venda_zerada' | 'desconto' | 'pago_a_menor';
+
+export interface ResumoPessoa {
+  nome: string;
+  vendas: number;
+  total: number;
+  ticketMedio: number;
+  canceladas: number;
+  valorCancelado: number;
+  descontos: number;
+  valorDesconto: number;
+  ocorrencias: number;
+  porTipo: Record<TipoOcorrencia, number>;
+}
+
+export interface OcorrenciaVenda {
+  tipo: TipoOcorrencia;
+  vendaId: string;
+  vendaNumero: string;
+  dia: string;
+  hora: number | null;
+  operador: string;
+  vendedor: string;
+  caixa: string | null;
+  valor: number;
+  diferenca: number;
+  detalhe: string;
+}
+
+export interface OperadoresResponse {
+  periodo: { from: string; to: string };
+  limiteDescontoPct: number;
+  totais: { vendas: number; total: number; canceladas: number; valorCancelado: number; ocorrencias: number };
+  operadores: ResumoPessoa[];
+  vendedores: ResumoPessoa[];
+  fechamentos: Array<{ operador: string; fechados: number; abertos: number }>;
+  ocorrencias: OcorrenciaVenda[];
+  totalOcorrencias: number;
+  ocorrenciasTruncadas: boolean;
+  avisos: string[];
+}

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
 import { redis } from '../db/redis.js';
+import { relatorioOperadores } from './operadores.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
@@ -1311,6 +1312,21 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return { data };
+  }));
+
+  // Operadores de caixa (dono 24/09, openspec/changes/operadores-caixa): o que passou por cada
+  // operador/vendedor + ocorrencias (cancelada, sem itens, desconto...) com QUEM lancou a venda.
+  app.get('/api/reports/operadores', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('operadores', async (req) => {
+    const query = z.object({
+      from: z.string().date().optional(), to: z.string().date().optional(), storeId: z.string().optional(),
+      operador: z.string().max(80).optional(),
+      limiteDesconto: z.coerce.number().min(0).max(100).default(10),
+    }).parse(req.query);
+    const { from, to } = defaultPeriod(query.from, query.to);
+    return relatorioOperadores(prisma, {
+      tenantId: req.user!.tenantId, storeId: resolveStoreScope(req, query.storeId), from, to,
+      operador: query.operador, limiteDescontoPct: query.limiteDesconto,
+    });
   }));
 
   app.get('/api/reports/dashboard/top-operators', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('top-operators', async (req) => {
