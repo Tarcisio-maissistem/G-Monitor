@@ -1,35 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
 import { logger } from '../logger.js';
 import { prisma, prismaSync } from '../db/prisma.js';
 import { hashToken } from '../auth/tokens.js';
 import { marcarDadosNovos } from '../reports/routes.js';
+import { syncBatchSchema } from './syncSchema.js';
 
 // Endpoint HTTP usado pelo AGENTE para empurrar lotes de sync.
 // Auth: Bearer agent token (mesmo formato de WS).
-
-const syncBatchSchema = z.object({
-  // recent=true: reenvio da JANELA RECENTE (linhas alteradas: cancelamento, baixa, edicao).
-  // Nao avanca checkpoint nem conta no ritmo — o agente manda no maximo 1 por tabela por tick.
-  recent: z.boolean().optional(),
-  table: z.enum([
-    'sales',
-    'saleItems',
-    'payments',
-    'customers',
-    'products',
-    'cashClosings',
-    'cashClosingSpecies',
-    'cardTransactions',
-    'payables',
-    'receivables',
-  ]),
-  rows: z.array(z.record(z.unknown())).max(1000),
-  checkpoint: z.string(),
-});
 
 // Bulk upsert multi-linha (decisao D14, openspec/changes/create-saas-platform/design.md) —
 // substitui N upserts individuais (N round-trips de rede) por 1 statement so, INSERT ...
@@ -48,6 +28,15 @@ async function bulkUpsert(
   rows: Record<string, unknown>[],
 ): Promise<number> {
   if (rows.length === 0) return 0;
+  // Lote grande (janela recente) grava em fatias de 1000: um INSERT com 5000 linhas passa do
+  // limite de 65.535 parametros do Postgres.
+  if (rows.length > LOTE_CHEIO) {
+    let total = 0;
+    for (let i = 0; i < rows.length; i += LOTE_CHEIO) {
+      total += await bulkUpsert(table, columns, conflictColumns, rows.slice(i, i + LOTE_CHEIO));
+    }
+    return total;
+  }
   const updateColumns = columns.filter((c) => !conflictColumns.includes(c));
   const allColumns = ['id', ...columns];
 
