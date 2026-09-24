@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { Errors } from '@gmonitor/shared';
 import { logger } from '../logger.js';
@@ -263,6 +263,10 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
               quantity: Number(r.quantity ?? 0),
               unitValue: Number(r.unitValue ?? 0),
               totalValue: Number(r.totalValue ?? 0),
+              // 0.9.11: agente antigo nao manda -> null/false (nao inventa desconto)
+              discount: r.discount != null && Number.isFinite(Number(r.discount)) ? Number(r.discount) : null,
+              itemCancelled: r.itemCancelled === true,
+              seller: r.seller ? String(r.seller).slice(0, 60) : null,
               createdAt: new Date(),
             };
           })
@@ -270,7 +274,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
 
         persisted = await bulkUpsert(
           'sale_items',
-          ['tenantId', 'storeId', 'saleId', 'sourceId', 'productCode', 'description', 'quantity', 'unitValue', 'totalValue', 'createdAt'],
+          ['tenantId', 'storeId', 'saleId', 'sourceId', 'productCode', 'description', 'quantity', 'unitValue', 'totalValue', 'discount', 'itemCancelled', 'seller', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           rows,
         );
@@ -289,7 +293,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
 
         persisted = await bulkUpsert(
           'payments',
-          ['tenantId', 'storeId', 'sourceId', 'saleId', 'saleSourceId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'obs', 'caixa', 'operador', 'createdAt'],
+          ['tenantId', 'storeId', 'sourceId', 'saleId', 'saleSourceId', 'paymentDate', 'paymentType', 'especie', 'value', 'kind', 'obs', 'caixa', 'operador', 'hora', 'createdAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
@@ -307,6 +311,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             obs: r.obs ? String(r.obs).slice(0, 200) : null,
             caixa: r.caixa ? String(r.caixa).slice(0, 20) : null,
             operador: r.operador ? String(r.operador).slice(0, 40) : null,
+            hora: typeof r.hora === 'string' && /^\d{2}:\d{2}:\d{2}$/.test(r.hora) ? r.hora : null, // 0.9.11
             createdAt: new Date(),
           })),
         );
@@ -431,7 +436,7 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
       case 'payables':
         persisted = await bulkUpsert(
           'payables',
-          ['tenantId', 'storeId', 'sourceId', 'dueDate', 'value', 'paidValue', 'paidDate', 'counterparty', 'description', 'cancelled', 'createdAt', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId', 'dueDate', 'value', 'paidValue', 'paidDate', 'counterparty', 'description', 'cancelled', 'accountCode', 'costCenter', 'createdAt', 'updatedAt'],
           ['tenantId', 'storeId', 'sourceId'],
           body.rows.map((r) => ({
             tenantId: ctx.tenantId,
@@ -442,6 +447,8 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             paidValue: Number(r.paidValue ?? 0),
             paidDate: r.paidDate ? new Date(String(r.paidDate)) : null,
             counterparty: r.counterparty ? String(r.counterparty) : null,
+            accountCode: r.accountCode ? String(r.accountCode).slice(0, 30) : null, // 0.9.11 plano de contas
+            costCenter: r.costCenter ? String(r.costCenter).slice(0, 20) : null,
             description: r.description ? String(r.description) : null,
             cancelled: Boolean(r.cancelled),
             createdAt: new Date(),
@@ -469,6 +476,47 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
             createdAt: new Date(),
             updatedAt: new Date(),
           })),
+        );
+        break;
+
+      // 0.9.11: USUARIOS do GDOOR (sem senha) — nome por ID e permissoes
+      case 'users':
+        persisted = await bulkUpsert(
+          'gdoor_users',
+          ['tenantId', 'storeId', 'sourceId', 'nome', 'ativo', 'supervisor', 'cancelaItem', 'descontoItem', 'cancelaCupom', 'descontoCupom', 'descontoMax', 'updatedAt'],
+          ['tenantId', 'storeId', 'sourceId'],
+          body.rows.filter((r) => r.sourceId != null && String(r.nome ?? '').trim() !== '').map((r) => ({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            sourceId: String(r.sourceId),
+            nome: String(r.nome).trim().slice(0, 60),
+            ativo: r.ativo !== false,
+            supervisor: r.supervisor === true,
+            cancelaItem: r.cancelaItem === true,
+            descontoItem: r.descontoItem === true,
+            cancelaCupom: r.cancelaCupom === true,
+            descontoCupom: r.descontoCupom === true,
+            descontoMax: r.descontoMax != null && Number.isFinite(Number(r.descontoMax)) ? Number(r.descontoMax) : null,
+            updatedAt: new Date(),
+          })),
+        );
+        break;
+
+      // 0.9.11: AUDITORIA do GDOOR. Sem ID na origem: o hash da linha deduplica (a mesma linha
+      // volta quando o agente relê o ultimo segundo).
+      case 'auditEvents':
+        persisted = await bulkUpsert(
+          'audit_events',
+          ['tenantId', 'storeId', 'hash', 'usuario', 'info', 'data', 'hora', 'createdAt'],
+          ['tenantId', 'storeId', 'hash'],
+          [...new Map(body.rows.filter((r) => r.data).map((r) => {
+            const usuario = String(r.usuario ?? '').trim().slice(0, 60);
+            const info = String(r.info ?? '').trim().slice(0, 1024);
+            const data = String(r.data).slice(0, 10);
+            const hora = typeof r.hora === 'string' ? r.hora.slice(0, 8) : null;
+            const hash = createHash('sha1').update(`${usuario}|${info}|${data}|${hora ?? ''}`).digest('hex');
+            return [hash, { tenantId: ctx.tenantId, storeId: ctx.storeId, hash, usuario, info, data: new Date(`${data}T00:00:00Z`), hora, createdAt: new Date() }] as const;
+          })).values()], // dedupe no proprio lote: o ON CONFLICT nao aceita a mesma chave 2x
         );
         break;
 

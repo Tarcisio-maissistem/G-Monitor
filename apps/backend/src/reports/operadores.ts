@@ -155,12 +155,14 @@ export async function relatorioOperadores(prisma: PrismaClient, p: {
 
   // Fechamentos de caixa por operador (abertos = sem closedAt)
   const fech = await prisma.$queryRaw<Array<{ operador: string; fechados: bigint; abertos: bigint }>>(Prisma.sql`
-    SELECT COALESCE(NULLIF(UPPER(TRIM("operatorName")), ''), '(sem operador)') AS operador,
-           COUNT(*) FILTER (WHERE "closedAt" IS NOT NULL) AS fechados,
-           COUNT(*) FILTER (WHERE "closedAt" IS NULL) AS abertos
-    FROM cash_closings
-    WHERE "tenantId" = ${p.tenantId} ${p.storeId ? Prisma.sql`AND "storeId" = ${p.storeId}` : Prisma.empty}
-      AND COALESCE("closedAt", "openedAt") >= ${p.from} AND COALESCE("closedAt", "openedAt") <= ${p.to}
+    -- o fechamento guarda o ID do usuario do GDOOR; o nome vem de gdoor_users (agente >= 0.9.11)
+    SELECT COALESCE(NULLIF(UPPER(TRIM(u.nome)), ''), NULLIF(UPPER(TRIM(c."operatorName")), ''), '(sem operador)') AS operador,
+           COUNT(*) FILTER (WHERE c."closedAt" IS NOT NULL) AS fechados,
+           COUNT(*) FILTER (WHERE c."closedAt" IS NULL) AS abertos
+    FROM cash_closings c
+    LEFT JOIN gdoor_users u ON u."tenantId" = c."tenantId" AND u."storeId" = c."storeId" AND u."sourceId" = TRIM(c."operatorName")
+    WHERE c."tenantId" = ${p.tenantId} ${p.storeId ? Prisma.sql`AND c."storeId" = ${p.storeId}` : Prisma.empty}
+      AND COALESCE(c."closedAt", c."openedAt") >= ${p.from} AND COALESCE(c."closedAt", c."openedAt") <= ${p.to}
     GROUP BY 1`);
   const fechamentos = fech.map((f) => ({ operador: f.operador, fechados: Number(f.fechados), abertos: Number(f.abertos) }));
 
