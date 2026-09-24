@@ -5,6 +5,7 @@ import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
 import { redis } from '../db/redis.js';
 import { relatorioOperadores } from './operadores.js';
+import { montarResumoFechamento } from './fechamentoResumo.js';
 import { anexarQuemLancou } from '../conciliacao/quemLancou.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -1133,7 +1134,30 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     );
     totals.ticket = totals.qtd > 0 ? totals.total / totals.qtd : 0;
 
-    return { period: { year: query.year, month: query.month }, data, totals, meta };
+    // Resultado do mes no formato do gestor (24/09): entradas brutas -> a prazo -> recebidos ->
+    // saidas -> resultado. So venda entra nas formas; o titulo recebido entra em RECEBIDOS.
+    const loja = storeId ? Prisma.sql`AND "storeId" = ${storeId}` : Prisma.empty;
+    const [pagForma, recebidosRow, saidasRows] = await Promise.all([
+      prisma.$queryRaw<{ especie: string | null; paymentType: string | null; total: unknown }[]>(Prisma.sql`
+        SELECT especie, "paymentType", SUM(value) AS total FROM payments
+        WHERE "tenantId" = ${req.user!.tenantId} ${loja} AND ("kind" IS NULL OR "kind" = 'venda')
+          AND "paymentDate" >= ${from} AND "paymentDate" <= ${to} GROUP BY 1, 2`),
+      prisma.$queryRaw<{ valor: unknown; qtd: bigint }[]>(Prisma.sql`
+        SELECT COALESCE(SUM("receivedValue"), 0) AS valor, COUNT(*) AS qtd FROM receivables
+        WHERE "tenantId" = ${req.user!.tenantId} ${loja} AND cancelled = false AND "receivedValue" > 0
+          AND "receivedDate" >= ${from} AND "receivedDate" <= ${to}`),
+      prisma.$queryRaw<{ grupo: string | null; valor: unknown; qtd: bigint }[]>(Prisma.sql`
+        SELECT NULLIF(UPPER(TRIM(counterparty)), '') AS grupo, SUM("paidValue") AS valor, COUNT(*) AS qtd FROM payables
+        WHERE "tenantId" = ${req.user!.tenantId} ${loja} AND cancelled = false AND "paidValue" > 0
+          AND "paidDate" >= ${from} AND "paidDate" <= ${to} GROUP BY 1`),
+    ]);
+    const resumo = montarResumoFechamento({
+      pagamentos: pagForma.map((r) => ({ especie: r.especie, paymentType: r.paymentType, valor: Number(r.total ?? 0) })),
+      recebidos: { valor: Number(recebidosRow[0]?.valor ?? 0), qtd: Number(recebidosRow[0]?.qtd ?? 0) },
+      saidas: saidasRows.map((r) => ({ grupo: r.grupo, valor: Number(r.valor ?? 0), qtd: Number(r.qtd) })),
+    });
+
+    return { period: { year: query.year, month: query.month }, data, totals, resumo, meta };
   }));
 
   app.get('/api/reports/cash-movements', { preHandler: [requireAuth, requireCapability('reports.view')] }, cached('cash-movements', async (req) => {
