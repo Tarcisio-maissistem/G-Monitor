@@ -11,7 +11,6 @@ import { EmpresasPage } from './pages/EmpresasPage';
 import { UsuariosPage } from './pages/UsuariosPage';
 import { ProdutosPage } from './pages/ProdutosPage';
 import { ClientesPage } from './pages/ClientesPage';
-import { PagamentosPage } from './pages/PagamentosPage';
 import { FinanceiroPage } from './pages/FinanceiroPage';
 import { MovimentoCaixaPage } from './pages/MovimentoCaixaPage';
 import { CaixaDetalhadoPage } from './pages/CaixaDetalhadoPage';
@@ -109,7 +108,8 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/contas-receber') return <ContasReceberPage />;
   if (path === '/produtos') return <ProdutosPage />;
   if (path === '/clientes') return <ClientesPage />;
-  if (path === '/pagamentos') return <PagamentosPage />;
+  // Pagamentos virou aba do Financeiro (25/09); o link antigo continua abrindo a aba
+  if (path === '/pagamentos' || path === '/financeiro/pagamentos') return <FinanceiroPage aba="pagamentos" />;
   if (path === '/financeiro') return <FinanceiroPage />;
   if (path === '/movimento-caixa') return <MovimentoCaixaPage />;
   if (path === '/caixa-detalhado') return <CaixaDetalhadoPage />;
