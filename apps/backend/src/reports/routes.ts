@@ -1146,8 +1146,10 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         SELECT COALESCE(SUM("receivedValue"), 0) AS valor, COUNT(*) AS qtd FROM receivables
         WHERE "tenantId" = ${req.user!.tenantId} ${loja} AND cancelled = false AND "receivedValue" > 0
           AND "receivedDate" >= ${from} AND "receivedDate" <= ${to}`),
-      prisma.$queryRaw<{ grupo: string | null; valor: unknown; qtd: bigint }[]>(Prisma.sql`
-        SELECT NULLIF(UPPER(TRIM(counterparty)), '') AS grupo, SUM("paidValue") AS valor, COUNT(*) AS qtd FROM payables
+      prisma.$queryRaw<{ grupo: string | null; valor: unknown; qtd: bigint; por_conta: boolean }[]>(Prisma.sql`
+        -- plano de contas (agente >= 0.9.11) quando houver; senao o fornecedor
+        SELECT COALESCE('Conta ' || NULLIF(TRIM("accountCode"), ''), NULLIF(UPPER(TRIM(counterparty)), '')) AS grupo,
+               SUM("paidValue") AS valor, COUNT(*) AS qtd, BOOL_OR(NULLIF(TRIM("accountCode"), '') IS NOT NULL) AS por_conta FROM payables
         WHERE "tenantId" = ${req.user!.tenantId} ${loja} AND cancelled = false AND "paidValue" > 0
           AND "paidDate" >= ${from} AND "paidDate" <= ${to} GROUP BY 1`),
     ]);
@@ -1156,6 +1158,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       recebidos: { valor: Number(recebidosRow[0]?.valor ?? 0), qtd: Number(recebidosRow[0]?.qtd ?? 0) },
       saidas: saidasRows.map((r) => ({ grupo: r.grupo, valor: Number(r.valor ?? 0), qtd: Number(r.qtd) })),
     });
+    // maioria do valor com codigo de conta => o quadro e "por plano de contas"
+    const valorPorConta = saidasRows.filter((r) => r.por_conta).reduce((a, r) => a + Number(r.valor ?? 0), 0);
+    if (resumo.saidas.total > 0 && valorPorConta / resumo.saidas.total > 0.5) resumo.saidas.agrupadoPor = 'plano_contas';
 
     return { period: { year: query.year, month: query.month }, data, totals, resumo, meta };
   }));
@@ -1170,7 +1175,12 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     // o lado: sangria/outro = saida; venda/recebimento/suprimento (e null = agente antigo) = entrada.
     const ehSaida = (kind: string | null): boolean => kind === 'sangria' || kind === 'outro';
     const [rows, total, porKind] = await Promise.all([
-      prisma.payment.findMany({ where, orderBy: { paymentDate: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.payment.findMany({
+        where, orderBy: [{ paymentDate: 'desc' }, { hora: 'desc' }, { sourceId: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize,
+        // 24/09 (gestor J.Kastros): quem fez o movimento. Agente >= 0.9.9 manda o operador; antes
+        // disso vale o operador da venda ligada ao pagamento.
+        include: { sale: { select: { operatorName: true, saleHour: true, caixa: true } } },
+      }),
       prisma.payment.count({ where }),
       prisma.payment.groupBy({ by: ['kind'], where, _sum: { value: true } }),
     ]);
@@ -1185,6 +1195,11 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         entrada: ehSaida(r.kind) ? 0 : Number(r.value),
         saida: ehSaida(r.kind) ? Number(r.value) : 0,
         historico: r.kind === 'sangria' || r.kind === 'suprimento' ? `${r.kind.toUpperCase()} · ${r.paymentType}` : r.paymentType,
+        // hora exata (agente 0.9.11); sem ela, a hora da venda ligada (so a hora cheia)
+        hora: r.hora ?? (r.sale?.saleHour != null ? `${String(r.sale.saleHour).padStart(2, '0')}h` : null),
+        operador: r.operador?.trim().toUpperCase() || r.sale?.operatorName?.trim().toUpperCase() || null,
+        caixa: r.caixa ?? r.sale?.caixa ?? null,
+        obs: r.obs ?? null,
       })),
       pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) },
       summary: { entrada, saida, saldo: entrada - saida },

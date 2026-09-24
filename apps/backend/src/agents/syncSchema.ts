@@ -16,6 +16,8 @@ export const syncBatchSchema = z.object({
     'cardTransactions',
     'payables',
     'receivables',
+    'users',        // 0.9.11: USUARIOS do GDOOR (nome por ID)
+    'auditEvents',  // 0.9.11: AUDITORIA do GDOOR
   ]),
   // 24/09: a janela recente do agente 0.9.8 manda ate 5000 linhas num lote so (FIRST 2000/5000);
   // com max(1000) o servidor recusava TODAS (ZodError 500, ~4 mil vezes de 20 a 22/09) e

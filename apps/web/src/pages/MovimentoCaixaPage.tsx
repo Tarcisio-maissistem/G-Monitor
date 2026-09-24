@@ -10,6 +10,10 @@ interface CashMovement {
   entrada: number;
   saida: number;
   historico: string | null;
+  hora: string | null;      // 24/09: 'HH:MM:SS' (agente 0.9.11) ou 'HHh' (hora da venda)
+  operador: string | null;  // 24/09: quem fez o movimento
+  caixa: string | null;
+  obs: string | null;
 }
 
 interface Resp {
@@ -75,6 +79,9 @@ export function MovimentoCaixaPage(): JSX.Element {
               <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
                 <tr>
                   <th className="px-3 py-2 text-left">Data</th>
+                  <th className="px-3 py-2 text-left">Hora</th>
+                  <th className="px-3 py-2 text-left">Operador</th>
+                  <th className="px-3 py-2 text-left">Caixa</th>
                   <th className="px-3 py-2 text-left">Histórico</th>
                   <th className="px-3 py-2 text-right">Entrada</th>
                   <th className="px-3 py-2 text-right">Saída</th>
@@ -84,8 +91,12 @@ export function MovimentoCaixaPage(): JSX.Element {
               <tbody>
                 {rows.map((m) => (
                   <tr key={m.id} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">{new Date(m.movementDate).toLocaleString('pt-BR')}</td>
-                    <td className="px-3 py-2 text-slate-600 max-w-md truncate" title={m.historico ?? ''}>{m.historico ?? '-'}</td>
+                    {/* so a DATA: a hora do GDOOR vem na coluna seguinte (antes aparecia 00:00:00) */}
+                    <td className="px-3 py-2">{new Date(m.movementDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.hora ?? '—'}</td>
+                    <td className="px-3 py-2 font-medium">{m.operador ?? '—'}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.caixa ?? '—'}</td>
+                    <td className="px-3 py-2 text-slate-600 max-w-md truncate" title={[m.historico, m.obs].filter(Boolean).join(' — ')}>{m.historico ?? '-'}{m.obs ? <span className="text-slate-400"> · {m.obs}</span> : null}</td>
                     <td className="px-3 py-2 text-right text-emerald-700 font-medium">{m.entrada > 0 ? formatBRL(m.entrada) : '-'}</td>
                     <td className="px-3 py-2 text-right text-red-700 font-medium">{m.saida > 0 ? formatBRL(m.saida) : '-'}</td>
                     <td className="px-3 py-2 text-right font-medium">{formatBRL(m.entrada - m.saida)}</td>

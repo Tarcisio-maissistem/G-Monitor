@@ -55,6 +55,40 @@ async function postBatch(cfg: AgentConfig, table: string, rows: unknown[], check
   return out;
 }
 
+// 0.9.11 — PLANO B de coluna: as consultas de itens/pagamentos/contas a pagar ganharam colunas
+// novas (desconto, hora, plano de contas). Se o GDOOR de alguma loja nao tiver uma delas, o
+// Firebird recusa a consulta INTEIRA e a loja pararia de sincronizar. Entao: tenta a nova; se o
+// erro for de coluna desconhecida, usa a versao '-v1' (a anterior) e lembra ate o agente reiniciar.
+const semColunaNova = new Set<string>();
+type Pool = NonNullable<ReturnType<typeof getFirebirdPool>>;
+export async function consultar<T>(pool: Pool, entryId: string, params: unknown[]): Promise<T[]> {
+  const v1 = `${entryId}-v1`;
+  const temV1 = resolveReport(v1) != null;
+  if (temV1 && semColunaNova.has(entryId)) return pool.query<T>(resolveReport(v1)!.sql, params);
+  try {
+    return await pool.query<T>(resolveReport(entryId)!.sql, params);
+  } catch (err) {
+    const msg = String((err as Error)?.message ?? err);
+    if (temV1 && /column unknown|-206|unknown column/i.test(msg)) {
+      semColunaNova.add(entryId);
+      logger.warn({ entryId, err: msg.slice(0, 200) }, 'GDOOR sem coluna nova — usando a consulta anterior (plano B)');
+      return pool.query<T>(resolveReport(v1)!.sql, params);
+    }
+    throw err;
+  }
+}
+
+// TIME do Firebird -> 'HH:MM:SS' (mesma leitura do combineDateTime: o driver entrega o relogio
+// local nos campos UTC). Vazio = null — nunca '00:00:00', que e meia-noite de verdade.
+export function horaDe(t: unknown): string | null {
+  if (t == null || t === '') return null;
+  const d = t instanceof Date ? t : new Date(String(t));
+  if (Number.isNaN(d.getTime())) return null;
+  const p2 = (n: number): string => String(n).padStart(2, '0');
+  return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
+}
+const diaDe = (d: unknown): string => new Date(String(d)).toISOString().slice(0, 10);
+
 // Mapeadores Firebird -> payload (compartilhados pelo incremental e pela janela recente).
 const mapSale = (r: any) => ({
     sourceId: String(r.source_id),
@@ -80,6 +114,10 @@ const mapSaleItem = (r: any) => ({
     quantity: Number(r.quantity),
     unitValue: Number(r.unit_value),
     totalValue: Number(r.total_value),
+    // 0.9.11: desconto do item, item cancelado e vendedor do item (gestor J.Kastros 24/09)
+    discount: r['discount'] != null ? Number(r['discount']) : null,
+    itemCancelled: r['item_cancelled'] === 1 || r['item_cancelled'] === '1',
+    seller: r['seller'] && String(r['seller']).trim() !== '' ? String(r['seller']).trim() : null,
   });
 const mapPayment = (r: any) => ({
     sourceId: String(r.source_id),
@@ -92,6 +130,7 @@ const mapPayment = (r: any) => ({
     obs: r['obs'] ? String(r['obs']).trim() : null,
     caixa: r['caixa'] != null ? String(r['caixa']).trim() : null,
     operador: r['operador'] != null ? String(r['operador']).trim() : null,
+    hora: horaDe(r['hora']), // 0.9.11: o horario do movimento vinha zerado (so havia a DATA)
   });
 const mapCashClosing = (r: any) => ({
     sourceId: String(r['source_id']),
@@ -129,6 +168,9 @@ const mapPayable = (r: any) => ({
       counterparty: r['counterparty'] || null,
       description: r['description'] || null,
       cancelled: r['cancelled'] === 1 || r['cancelled'] === '1',
+      // 0.9.11: plano de contas e centro de custo (fechamento por plano de contas)
+      accountCode: r['account_code'] != null && String(r['account_code']).trim() !== '' ? String(r['account_code']).trim() : null,
+      costCenter: r['cost_center'] != null && String(r['cost_center']).trim() !== '' ? String(r['cost_center']).trim() : null,
     });
 const mapReceivable = (r: any) => ({
       sourceId: String(r['source_id']),
@@ -177,10 +219,9 @@ async function syncSaleItems(cfg: AgentConfig): Promise<number> {
   const pool = getFirebirdPool();
   if (!pool) return 0;
 
-  const entry = resolveReport('sync-sale-items-batch')!;
   const checkpoint = getCheckpoint('saleItems') ?? '0';
   const afterId = Number(checkpoint);
-  const rows = await pool.query<{
+  const rows = await consultar<{
     source_id: number;
     sale_source_id: number;
     product_code: string | null;
@@ -188,7 +229,7 @@ async function syncSaleItems(cfg: AgentConfig): Promise<number> {
     quantity: number;
     unit_value: number;
     total_value: number;
-  }>(entry.sql, [BATCH_SIZE, afterId]);
+  }>(pool, 'sync-sale-items-batch', [BATCH_SIZE, afterId]);
   if (rows.length === 0) return 0;
 
   const camelRows = rows.map(mapSaleItem);
@@ -216,10 +257,9 @@ async function syncPayments(cfg: AgentConfig): Promise<number> {
   const pool = getFirebirdPool();
   if (!pool) return 0;
 
-  const entry = resolveReport('sync-payments-batch')!;
   const checkpoint = getCheckpoint('payments') ?? '0';
   const afterId = Number(checkpoint);
-  const rows = await pool.query<{
+  const rows = await consultar<{
     source_id: number;
     sale_source_id: number | null;
     payment_date: string;
@@ -227,7 +267,7 @@ async function syncPayments(cfg: AgentConfig): Promise<number> {
     especie: string | null;
     total_value: number;
     tipo: string | null;
-  }>(entry.sql, [BATCH_SIZE, afterId]);
+  }>(pool, 'sync-payments-batch', [BATCH_SIZE, afterId]);
   if (rows.length === 0) return 0;
 
   const camelRows = rows.map(mapPayment);
@@ -255,10 +295,10 @@ async function syncFinancialTable(
   const schema = await detectFinancialSchema(pool);
   if (schema !== 'pagar_receber' && schema !== 'contas_pagar_receber') return 0;
 
-  const entry = resolveReport(reportIdByVariant[schema])!;
+  const entryId = reportIdByVariant[schema];
   const checkpoint = getCheckpoint(checkpointKey) ?? '0';
   const afterId = Number(checkpoint);
-  const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, afterId]);
+  const rows = await consultar<Record<string, unknown>>(pool, entryId, [BATCH_SIZE, afterId]);
   if (rows.length === 0) return 0;
 
   const camelRows = rows.map(mapRow);
@@ -372,9 +412,8 @@ function desdeRecente(): Date {
 async function syncRecent(cfg: AgentConfig, table: string, entryId: string, mapRow: (r: any) => unknown, params: unknown[]): Promise<number> {
   const pool = getFirebirdPool();
   if (!pool) return 0;
-  const entry = resolveReport(entryId);
-  if (!entry) return 0;
-  const rows = await pool.query<Record<string, unknown>>(entry.sql, params);
+  if (!resolveReport(entryId)) return 0;
+  const rows = await consultar<Record<string, unknown>>(pool, entryId, params);
   if (rows.length === 0) return 0;
   const { persisted } = await postBatch(cfg, table, rows.map(mapRow), getCheckpoint(table) ?? '0', true);
   return persisted;
@@ -465,6 +504,63 @@ async function ateEsvaziar(nome: string, fn: () => Promise<number>): Promise<num
   return total;
 }
 
+// 0.9.11 — USUARIOS: nome de cada usuario (o fechamento de caixa guarda so o ID). Tabela pequena,
+// vai inteira a cada 6h como janela recente (upsert na nuvem; sem checkpoint).
+async function syncUsers(cfg: AgentConfig): Promise<number> {
+  if (!podeRodarRecente('users')) return 0;
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+  const entry = resolveReport('sync-users-all');
+  if (!entry) return 0;
+  const rows = await pool.query<Record<string, unknown>>(entry.sql, []);
+  const payload = rows.map((r) => ({
+    sourceId: String(r['source_id']),
+    nome: String(r['nome'] ?? '').trim(),
+    ativo: Number(r['ativo'] ?? 1) === 1,
+    supervisor: String(r['supervisor'] ?? '').trim().toUpperCase() === 'S',
+    cancelaItem: String(r['cancitem'] ?? '').trim().toUpperCase() === 'S',
+    descontoItem: String(r['descitem'] ?? '').trim().toUpperCase() === 'S',
+    cancelaCupom: String(r['canccupom'] ?? '').trim().toUpperCase() === 'S',
+    descontoCupom: String(r['desccupom'] ?? '').trim().toUpperCase() === 'S',
+    descontoMax: r['desconto_max'] != null ? Number(r['desconto_max']) : null,
+  }));
+  let n = 0;
+  if (payload.length) n = (await postBatch(cfg, 'users', payload, '0', true)).persisted;
+  setCheckpoint('recent:users', String(Date.now()));
+  return n;
+}
+
+// 0.9.11 — AUDITORIA: quem cancelou/liberou desconto. Sem ID: checkpoint 'YYYY-MM-DD|HH:MM:SS' e
+// consulta por (DATA, HORA) >= checkpoint; a linha do mesmo segundo volta e a nuvem ignora pelo hash.
+// Primeira vez: comeca 90 dias atras (historico inteiro pesaria sem necessidade).
+async function syncAudit(cfg: AgentConfig): Promise<number> {
+  const pool = getFirebirdPool();
+  if (!pool) return 0;
+  const entry = resolveReport('sync-audit-batch');
+  if (!entry) return 0;
+  const inicio = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+  const [data, hora] = (getCheckpoint('auditEvents') ?? `${inicio}|00:00:00`).split('|') as [string, string];
+  const rows = await pool.query<Record<string, unknown>>(entry.sql, [BATCH_SIZE, data, data, hora]);
+  if (rows.length === 0) return 0;
+  const payload = rows.map((r) => ({
+    usuario: String(r['usuario'] ?? '').trim(),
+    info: String(r['info'] ?? '').trim().slice(0, 1024),
+    data: diaDe(r['data']),
+    hora: horaDe(r['hora']),
+  }));
+  const ult = payload[payload.length - 1]!;
+  const ck = `${ult.data}|${ult.hora ?? '00:00:00'}`;
+  await postBatch(cfg, 'auditEvents', payload, ck);
+  // lote cheio de um segundo so nao anda: evita laco infinito avancando 1 segundo
+  if (rows.length >= BATCH_SIZE && ck === `${data}|${hora}`) {
+    const d = new Date(`1970-01-01T${hora}Z`); d.setUTCSeconds(d.getUTCSeconds() + 1);
+    setCheckpoint('auditEvents', `${data}|${d.toISOString().slice(11, 19)}`);
+  } else {
+    setCheckpoint('auditEvents', ck);
+  }
+  return rows.length;
+}
+
 async function tick(cfg: AgentConfig): Promise<void> {
   {
     running = true;
@@ -516,6 +612,19 @@ async function tick(cfg: AgentConfig): Promise<void> {
         if (persisted > 0) logger.info({ table: 'receivables', persisted }, 'sync tick');
       } catch (err) {
         logger.error({ err }, 'sync tick failed (receivables)');
+      }
+      // 0.9.11: usuarios (nome por ID) e trilha de auditoria. Falha aqui nunca derruba o resto.
+      try {
+        const n = await syncUsers(cfg);
+        if (n > 0) logger.info({ table: 'users', persisted: n }, 'sync tick');
+      } catch (err) {
+        logger.warn({ err }, 'sync de usuarios falhou (segue no proximo ciclo)');
+      }
+      try {
+        const n = await ateEsvaziar('auditEvents', () => syncAudit(cfg));
+        if (n > 0) logger.info({ table: 'auditEvents', lidas: n }, 'sync tick');
+      } catch (err) {
+        logger.warn({ err }, 'sync da auditoria falhou (segue no proximo ciclo)');
       }
       await janelaRecente(cfg, emDia);
     } finally {

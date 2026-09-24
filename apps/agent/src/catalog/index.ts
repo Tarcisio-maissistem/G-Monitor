@@ -78,7 +78,8 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? I.ID AS SOURCE_ID, I.ID_VENDAS AS SALE_SOURCE_ID, I.CODIGO AS PRODUCT_CODE,
              I.DESCRICAO AS DESCRIPTION, I.QTD AS QUANTITY, I.VALOR_UNITA AS UNIT_VALUE,
-             I.VALOR_TOTAL AS TOTAL_VALUE
+             I.VALOR_TOTAL AS TOTAL_VALUE,
+             I.VALOR_DESCO AS DISCOUNT, I.CANCELADA AS ITEM_CANCELLED, I.VENDEDOR AS SELLER
       FROM ITEVENDAS I
       JOIN VENDAS V ON V.ID = I.ID_VENDAS
       WHERE V.DATA_EMISSAO >= ?
@@ -95,7 +96,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
              -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
              -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
              -- ao PDV certo em vez de jogar tudo no dia.
-             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR, M.HORA AS HORA
       FROM MOV_OPERADORES M
       LEFT JOIN (
         SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
@@ -111,7 +112,8 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS TOTAL_VALUE,
              COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
-             P.NOM_FORNECEDOR AS COUNTERPARTY, P.HISTORICO AS DESCRIPTION, COALESCE(P.CANCELADA, 0) AS CANCELLED
+             P.NOM_FORNECEDOR AS COUNTERPARTY, P.HISTORICO AS DESCRIPTION, COALESCE(P.CANCELADA, 0) AS CANCELLED,
+             P.NUM_CONTA AS ACCOUNT_CODE, P.CTO_CUSTO AS COST_CENTER
       FROM PAGAR P
       WHERE P.VENCIMENTO >= ? OR P.PAGAMENTO >= ?
       ORDER BY P.ID ASC
@@ -193,7 +195,8 @@ export const CATALOG: Record<string, CatalogEntry> = {
     sql: `
       SELECT FIRST ? I.ID AS SOURCE_ID, I.ID_VENDAS AS SALE_SOURCE_ID, I.CODIGO AS PRODUCT_CODE,
              I.DESCRICAO AS DESCRIPTION, I.QTD AS QUANTITY, I.VALOR_UNITA AS UNIT_VALUE,
-             I.VALOR_TOTAL AS TOTAL_VALUE
+             I.VALOR_TOTAL AS TOTAL_VALUE,
+             I.VALOR_DESCO AS DISCOUNT, I.CANCELADA AS ITEM_CANCELLED, I.VENDEDOR AS SELLER
       FROM ITEVENDAS I
       WHERE I.ID > ?
       ORDER BY I.ID ASC
@@ -210,7 +213,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
              -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
              -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
              -- ao PDV certo em vez de jogar tudo no dia.
-             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR, M.HORA AS HORA
       FROM MOV_OPERADORES M
       LEFT JOIN (
         SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
@@ -231,7 +234,8 @@ export const CATALOG: Record<string, CatalogEntry> = {
              COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
              P.NOM_FORNECEDOR AS COUNTERPARTY,
              P.HISTORICO AS DESCRIPTION,
-             COALESCE(P.CANCELADA, 0) AS CANCELLED
+             COALESCE(P.CANCELADA, 0) AS CANCELLED,
+             P.NUM_CONTA AS ACCOUNT_CODE, P.CTO_CUSTO AS COST_CENTER
       FROM PAGAR P
       WHERE P.ID > ?
       ORDER BY P.ID ASC
@@ -332,6 +336,140 @@ export const CATALOG: Record<string, CatalogEntry> = {
   // Colunas de uma tabela do Firebird — para descobrir o que existe sem chutar (ex.: se
   // MOV_OPERADORES guarda o historico/caixa da sangria, que diria se ela pagou despesa ou so
   // foi pro cofre). So metadados, nunca dado do cliente.
+  // 0.9.11 (gestor J.Kastros 24/09): nome de cada usuario do GDOOR — o fechamento de caixa guarda
+  // so o ID (ID_USUARIO_FECHAMENTO). SENHA NUNCA sai daqui. Tabela pequena: vai inteira.
+  // 0.9.11: versoes ANTERIORES (sem as colunas novas). O agente cai nelas se o GDOOR da loja nao
+  // tiver alguma coluna nova — melhor sincronizar sem o campo novo do que parar a loja.
+  'sync-sale-items-batch-v1': {
+    id: 'sync-sale-items-batch-v1',
+    description: 'Pagina de itens de venda (ITEVENDAS) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? I.ID AS SOURCE_ID, I.ID_VENDAS AS SALE_SOURCE_ID, I.CODIGO AS PRODUCT_CODE,
+             I.DESCRICAO AS DESCRIPTION, I.QTD AS QUANTITY, I.VALOR_UNITA AS UNIT_VALUE,
+             I.VALOR_TOTAL AS TOTAL_VALUE
+      FROM ITEVENDAS I
+      WHERE I.ID > ?
+      ORDER BY I.ID ASC
+    `,
+  },
+  'sync-sale-items-recent-v1': {
+    id: 'sync-sale-items-recent-v1', description: 'Itens das vendas com emissao recente',
+    paramSchema: z.object({ limit: z.number().int().positive().max(5000), since: z.date() }),
+    sql: `
+      SELECT FIRST ? I.ID AS SOURCE_ID, I.ID_VENDAS AS SALE_SOURCE_ID, I.CODIGO AS PRODUCT_CODE,
+             I.DESCRICAO AS DESCRIPTION, I.QTD AS QUANTITY, I.VALOR_UNITA AS UNIT_VALUE,
+             I.VALOR_TOTAL AS TOTAL_VALUE
+      FROM ITEVENDAS I
+      JOIN VENDAS V ON V.ID = I.ID_VENDAS
+      WHERE V.DATA_EMISSAO >= ?
+      ORDER BY I.ID ASC
+    `,
+  },
+  'sync-payments-batch-v1': {
+    id: 'sync-payments-batch-v1',
+    description: 'Pagina de pagamentos (MOV_OPERADORES) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
+             UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO,
+             -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
+             -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
+             -- ao PDV certo em vez de jogar tudo no dia.
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
+      FROM MOV_OPERADORES M
+      LEFT JOIN (
+        SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
+        FROM PDV_ESPECIES GROUP BY 1
+      ) P ON UPPER(TRIM(M.ESPECIE)) = P.ESP
+      WHERE M.ID > ? AND UPPER(TRIM(M.ESPECIE)) <> 'TROCO'
+      ORDER BY M.ID ASC
+    `,
+  },
+  'sync-payments-recent-v1': {
+    id: 'sync-payments-recent-v1', description: 'Pagamentos com data recente (reenvio de alteracoes)',
+    paramSchema: z.object({ limit: z.number().int().positive().max(5000), since: z.date() }),
+    sql: `
+      SELECT FIRST ? M.ID AS SOURCE_ID, M.ID_VENDA AS SALE_SOURCE_ID, M.DATA AS PAYMENT_DATE,
+             UPPER(TRIM(COALESCE(P.FORMA_XML, M.ESPECIE))) AS PAYMENT_TYPE,
+             M.ESPECIE AS ESPECIE, M.VALOR AS TOTAL_VALUE, M.TIPO AS TIPO,
+             -- 0.9.9: OBS/MOTIVO_SUPRIMENTO dizem se a sangria foi pro cofre, pro banco ou pagou
+             -- compra (duvida do dono 04/09); NRO_FAB e o caixa, que permite atribuir a sangria
+             -- ao PDV certo em vez de jogar tudo no dia.
+             COALESCE(M.OBS, M.MOTIVO_SUPRIMENTO) AS OBS, M.NRO_FAB AS CAIXA, M.OPERADOR AS OPERADOR
+      FROM MOV_OPERADORES M
+      LEFT JOIN (
+        SELECT UPPER(TRIM(ESPECIE)) AS ESP, MAX(UPPER(TRIM(FORMA_XML))) AS FORMA_XML
+        FROM PDV_ESPECIES GROUP BY 1
+      ) P ON UPPER(TRIM(M.ESPECIE)) = P.ESP
+      WHERE M.DATA >= ? AND UPPER(TRIM(M.ESPECIE)) <> 'TROCO'
+      ORDER BY M.ID ASC
+    `,
+  },
+  'sync-payables-batch-pagar-v1': {
+    id: 'sync-payables-batch-pagar-v1',
+    description: 'Pagina de contas a pagar (PAGAR) para sincronizacao incremental',
+    paramSchema: z.object({ afterId: z.number().int().nonnegative(), limit: z.number().int().positive().max(1000) }),
+    sql: `
+      SELECT FIRST ? P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS TOTAL_VALUE,
+             COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
+             P.NOM_FORNECEDOR AS COUNTERPARTY,
+             P.HISTORICO AS DESCRIPTION,
+             COALESCE(P.CANCELADA, 0) AS CANCELLED
+      FROM PAGAR P
+      WHERE P.ID > ?
+      ORDER BY P.ID ASC
+    `,
+  },
+  'sync-payables-recent-pagar-v1': {
+    id: 'sync-payables-recent-pagar-v1', description: 'Contas a pagar vencendo ou pagas recentemente',
+    paramSchema: z.object({ limit: z.number().int().positive().max(5000), since: z.date(), since2: z.date() }),
+    sql: `
+      SELECT FIRST ? P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS TOTAL_VALUE,
+             COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
+             P.NOM_FORNECEDOR AS COUNTERPARTY, P.HISTORICO AS DESCRIPTION, COALESCE(P.CANCELADA, 0) AS CANCELLED
+      FROM PAGAR P
+      WHERE P.VENCIMENTO >= ? OR P.PAGAMENTO >= ?
+      ORDER BY P.ID ASC
+    `,
+  },
+  'sync-users-all': {
+    id: 'sync-users-all',
+    description: 'Usuarios do GDOOR (sem senha) com as permissoes de desconto/cancelamento',
+    paramSchema: z.object({}),
+    sql: `
+      SELECT U.ID AS SOURCE_ID, U.USUARIO AS NOME, U.ATIVO, U.SUPERVISOR, U.CANCITEM, U.DESCITEM,
+             U.CANCCUPOM, U.DESCCUPOM, U.DESCONTO_MAX
+      FROM USUARIOS U
+      ORDER BY U.ID ASC
+    `,
+  },
+  // 0.9.11: trilha de auditoria do GDOOR (quem cancelou, liberou desconto...). Nao tem ID:
+  // anda por (DATA, HORA) e a nuvem ignora repetida pelo hash da linha. ADICIONAIS e BLOB: fora.
+  'sync-audit-batch': {
+    id: 'sync-audit-batch',
+    description: 'Pagina da AUDITORIA do GDOOR a partir de data/hora',
+    paramSchema: z.object({ limit: z.number().int().positive().max(1000), data: z.string(), data2: z.string(), hora: z.string() }),
+    sql: `
+      SELECT FIRST ? A.USUARIO, A.INFO, A.DATA, A.HORA
+      FROM AUDITORIA A
+      WHERE A.DATA > CAST(? AS DATE) OR (A.DATA = CAST(? AS DATE) AND A.HORA >= CAST(? AS TIME))
+      ORDER BY A.DATA ASC, A.HORA ASC
+    `,
+  },
+  // Lista de tabelas do banco (diagnostico: achar o plano de contas sem ir a loja)
+  'schema-tables': {
+    id: 'schema-tables',
+    description: 'Tabelas de usuario do banco (RDB$RELATIONS)',
+    paramSchema: z.object({}),
+    sql: `
+      SELECT TRIM(R.RDB$RELATION_NAME) AS TABELA
+      FROM RDB$RELATIONS R
+      WHERE COALESCE(R.RDB$SYSTEM_FLAG, 0) = 0 AND R.RDB$VIEW_BLR IS NULL
+      ORDER BY 1
+    `,
+  },
   'schema-columns': {
     id: 'schema-columns',
     description: 'Colunas de uma tabela (RDB$RELATION_FIELDS)',

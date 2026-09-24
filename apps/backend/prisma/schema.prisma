@@ -282,6 +282,9 @@ model SaleItem {
   quantity    Decimal  @db.Decimal(14, 3)
   unitValue   Decimal  @db.Decimal(14, 4)
   totalValue  Decimal  @db.Decimal(14, 2)
+  discount      Decimal? @db.Decimal(14, 2) // 0.9.11: ITEVENDAS.VALOR_DESCO
+  itemCancelled Boolean  @default(false)     // 0.9.11: ITEVENDAS.CANCELADA
+  seller        String?                      // 0.9.11: ITEVENDAS.VENDEDOR
   createdAt   DateTime @default(now())
 
   @@unique([tenantId, storeId, sourceId])
@@ -306,6 +309,10 @@ model Payment {
   // "avulsos". null = linha sincronizada por agente antigo (tratar como venda).
   kind        String?
   value       Decimal  @db.Decimal(14, 2)
+  obs         String?  // 0.9.9: motivo da sangria/suprimento
+  caixa       String?  // 0.9.9: NRO_FAB (caixa)
+  operador    String?  // 0.9.9: MOV_OPERADORES.OPERADOR (nome)
+  hora        String?  // 0.9.11: MOV_OPERADORES.HORA 'HH:MM:SS'
   createdAt   DateTime @default(now())
 
   @@unique([tenantId, storeId, sourceId])
@@ -329,6 +336,8 @@ model Payable {
   counterparty String?   // FORNECEDOR
   description  String?   // HISTORICO
   cancelled    Boolean   @default(false)
+  accountCode  String?   // 0.9.11: PAGAR.NUM_CONTA (plano de contas)
+  costCenter   String?   // 0.9.11: PAGAR.CTO_CUSTO
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -591,4 +600,41 @@ model GetcardDia {
 
   @@id([tenantId, dia])
   @@map("getcard_dias")
+}
+
+// Agente 0.9.11 (24/09): usuarios do GDOOR (sem senha) — nome por ID e permissoes
+model GdoorUser {
+  id            String   @id @default(cuid())
+  tenantId      String
+  storeId       String
+  sourceId      String
+  nome          String
+  ativo         Boolean  @default(true)
+  supervisor    Boolean  @default(false)
+  cancelaItem   Boolean  @default(false)
+  descontoItem  Boolean  @default(false)
+  cancelaCupom  Boolean  @default(false)
+  descontoCupom Boolean  @default(false)
+  descontoMax   Decimal? @db.Decimal(14, 2)
+  updatedAt     DateTime @default(now())
+
+  @@unique([tenantId, storeId, sourceId])
+  @@map("gdoor_users")
+}
+
+// Agente 0.9.11 (24/09): trilha AUDITORIA do GDOOR (sem ID na origem — hash da linha)
+model AuditEvent {
+  id        String   @id @default(cuid())
+  tenantId  String
+  storeId   String
+  hash      String
+  usuario   String
+  info      String
+  data      DateTime @db.Date
+  hora      String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, storeId, hash])
+  @@index([tenantId, storeId, data])
+  @@map("audit_events")
 }
