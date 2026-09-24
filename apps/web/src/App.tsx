@@ -16,6 +16,7 @@ import { FinanceiroPage } from './pages/FinanceiroPage';
 import { MovimentoCaixaPage } from './pages/MovimentoCaixaPage';
 import { CaixaDetalhadoPage } from './pages/CaixaDetalhadoPage';
 import { ComissaoPage } from './pages/ComissaoPage';
+import { OperadoresPage } from './pages/OperadoresPage';
 import { EstoqueAlertasPage } from './pages/EstoqueAlertasPage';
 import { SugestaoComprasPage } from './pages/SugestaoComprasPage';
 import { FechamentoMensalPage } from './pages/FechamentoMensalPage';
@@ -113,6 +114,7 @@ function renderPage(path: string, isSuperAdmin: boolean): JSX.Element {
   if (path === '/movimento-caixa') return <MovimentoCaixaPage />;
   if (path === '/caixa-detalhado') return <CaixaDetalhadoPage />;
   if (path === '/comissao') return <ComissaoPage />;
+  if (path === '/operadores') return <OperadoresPage />;
   if (path === '/alertas-estoque') return <EstoqueAlertasPage />;
   if (path === '/sugestao-compras') return <SugestaoComprasPage />;
   if (path === '/fechamento') return <FechamentoMensalPage />;
