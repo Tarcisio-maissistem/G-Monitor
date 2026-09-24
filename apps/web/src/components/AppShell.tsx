@@ -14,7 +14,8 @@ interface NavItem {
 
 export const NAV: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: '📊' },
-  { label: 'Pagamentos', path: '/pagamentos', icon: '💳' },
+  // 25/09 (dono): Pagamentos virou aba do Financeiro; Produtos, Clientes, Sugestao Compras e
+  // Alertas Estoque sairam do menu (sem cadastro de produto/custo sincronizado, as telas enganam).
   { label: 'Financeiro', path: '/financeiro', icon: '💰' },
   // Fluxo de Caixa e DRE logo apos Financeiro (D18) — rotas entram em App.tsx na Fase 3.
   { label: 'Fluxo de Caixa', path: '/fluxo-caixa', icon: '💵' },
@@ -27,12 +28,8 @@ export const NAV: NavItem[] = [
   { label: 'Conciliação', path: '/conciliacao', icon: '🏦' },
   { label: 'Operadores', path: '/operadores', icon: '🧑‍💼' },
   { label: 'Comissão', path: '/comissao', icon: '💎' },
-  { label: 'Alertas Estoque', path: '/alertas-estoque', icon: '⚠️' },
-  { label: 'Sugestão Compras', path: '/sugestao-compras', icon: '🛍️' },
   { label: 'Fechamento', path: '/fechamento', icon: '📅' },
   { label: 'Relatórios', path: '/relatorios', icon: '📈' },
-  { label: 'Produtos', path: '/produtos', icon: '📦' },
-  { label: 'Clientes', path: '/clientes', icon: '👥' },
   { label: 'Empresas', path: '/empresas', icon: '🏢', superAdminOnly: true },
 ];
 

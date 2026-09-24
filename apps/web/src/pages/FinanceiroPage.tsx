@@ -1,3 +1,5 @@
+import { useRoute } from '../lib/router';
+import { PagamentosPage } from './PagamentosPage';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
@@ -23,7 +25,7 @@ interface FinancialResponse {
   meta: { lastSyncedAt: string | null };
 }
 
-export function FinanceiroPage(): JSX.Element {
+function FinanceiroResumo(): JSX.Element {
   const today = useMemo(() => new Date(), []);
   const defaultFrom = useMemo(() => {
     return currentMonthRange(today).from;
@@ -208,4 +210,27 @@ function KpiCard({
 
 function formatBRL(n: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+}
+
+// 25/09 (dono): Pagamentos dentro do Financeiro, em abas. /pagamentos (link antigo) abre a aba.
+export function FinanceiroPage({ aba = 'resumo' }: { aba?: 'resumo' | 'pagamentos' }): JSX.Element {
+  const { navigate } = useRoute();
+  const Aba = ({ id, label, path }: { id: 'resumo' | 'pagamentos'; label: string; path: string }): JSX.Element => (
+    <button
+      type="button"
+      onClick={() => navigate(path)}
+      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${aba === id ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div>
+      <div className="max-w-7xl mx-auto px-6 pt-4 flex gap-1 border-b">
+        <Aba id="resumo" label="Resumo" path="/financeiro" />
+        <Aba id="pagamentos" label="Pagamentos" path="/financeiro/pagamentos" />
+      </div>
+      {aba === 'pagamentos' ? <PagamentosPage /> : <FinanceiroResumo />}
+    </div>
+  );
 }
