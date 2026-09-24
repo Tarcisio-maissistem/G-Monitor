@@ -10,7 +10,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { sessaoPortal, type GetcardRow } from './getcard.js';
-import { diasDoPeriodo, diasParaBuscar, hojeBrasilia } from './extratoDias.js';
+import { diasDoPeriodo, diasParaBuscar, diaUsavel, hojeBrasilia } from './extratoDias.js';
 
 export interface ExtratoComCache {
   linhas: GetcardRow[];
@@ -24,10 +24,12 @@ export async function extratoDoPeriodo(opts: {
   const periodo = diasDoPeriodo(opts.from, opts.to);
   const dataDe = (d: string): Date => new Date(`${d}T00:00:00Z`);
 
-  const jaTem = await prisma.getcardDia.findMany({
-    where: { tenantId: opts.tenantId, fechado: true, dia: { in: periodo.map(dataDe) } },
-    select: { dia: true, paginas: true },
+  // Fechados + o dia aberto (hoje) baixado ha menos de 5 min: esses nao vao ao portal
+  const noArquivo = await prisma.getcardDia.findMany({
+    where: { tenantId: opts.tenantId, dia: { in: periodo.map(dataDe) } },
+    select: { dia: true, paginas: true, fechado: true, baixadoEm: true },
   });
+  const jaTem = noArquivo.filter((d) => diaUsavel(d));
   const fechados = new Set(jaTem.map((d) => d.dia.toISOString().slice(0, 10)));
   const faltam = diasParaBuscar(periodo, fechados);
   let paginas = jaTem.reduce((a, d) => a + d.paginas, 0);

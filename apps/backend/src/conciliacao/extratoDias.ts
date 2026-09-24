@@ -19,3 +19,12 @@ export function diasDoPeriodo(from: string, to: string): string[] {
 export function diasParaBuscar(periodo: string[], fechados: Set<string>): string[] {
   return periodo.filter((d) => !fechados.has(d));
 }
+
+/** [24/09] Dia ainda aberto (hoje) baixado ha menos disso e reaproveitado do arquivo: o portal
+ *  GetCard leva segundos por consulta e o painel pede extrato/banco-dia a cada tela aberta. */
+export const JANELA_DIA_ABERTO_MS = 5 * 60_000;
+
+/** O dia do arquivo pode ser usado sem ir ao portal? Fechado sempre; aberto so se baixado agora ha pouco. */
+export function diaUsavel(dia: { fechado: boolean; baixadoEm: Date }, agora: Date = new Date()): boolean {
+  return dia.fechado || agora.getTime() - dia.baixadoEm.getTime() < JANELA_DIA_ABERTO_MS;
+}
