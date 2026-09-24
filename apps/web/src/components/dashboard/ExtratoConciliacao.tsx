@@ -152,6 +152,18 @@ export function ExtratoConciliacao({ range }: { range: DateRange }): JSX.Element
                         {/* pagamento do sistema so tem DATA; o "03:00" era meia-noite no fuso, nao horario real */}
                         {p.sistema ? ` · ${p.sistema.forma}` : ''}
                       </div>
+                      {/* quem lancou (24/09): certo quando a venda existe; "provável" quando so a maquininha tem */}
+                      {p.quem?.operador ? (
+                        <div className="text-[11px] text-slate-700">
+                          {p.quem.provavel ? 'Provável: ' : 'Lançado por '}<span className="font-semibold">{p.quem.operador}</span>
+                          {p.quem.vendedor ? ` · vendedor ${p.quem.vendedor}` : ''}
+                          {p.quem.caixa ? ` · caixa ${p.quem.caixa}` : ''}
+                          {p.quem.venda ? ` · venda ${p.quem.venda}` : ''}
+                          {p.quem.hora != null ? ` · ${p.quem.hora}h` : ''}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-400">Operador não identificado</div>
+                      )}
                     </div>
                     <div className="text-right shrink-0">
                       <div className={`text-sm font-semibold ${p.estado === 'so_no_extrato' ? 'text-red-700' : 'text-amber-700'}`}>{formatBRL(p.valor)}</div>

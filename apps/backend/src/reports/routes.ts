@@ -5,6 +5,7 @@ import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
 import { redis } from '../db/redis.js';
 import { relatorioOperadores } from './operadores.js';
+import { anexarQuemLancou } from '../conciliacao/quemLancou.js';
 import { logger } from '../logger.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { buildCashflow, buildForecast, pickGranularity, type Granularity } from './cashflow.js';
@@ -1910,7 +1911,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       extrato: { linhas: extrato.linhas.length, autorizadas: linhas.length, paginas: extrato.paginas, diasDoArquivo: extrato.cache.doArquivo, diasDoPortal: extrato.cache.doPortal },
       ...resultado,
       // so os problemas — a lista inteira pode ter milhares de linhas
-      problemas: resultado.itens.filter((i) => i.estado !== 'conciliado').slice(0, 200),
+      // 24/09: cada problema diz QUEM lancou (operador da venda; na maquininha, o provavel do caixa/hora)
+      problemas: await anexarQuemLancou(prisma, tenantId, resultado.itens.filter((i) => i.estado !== 'conciliado').slice(0, 200)),
       estornosSistema: {
         qtd: estornos.length,
         valor: estornos.reduce((a, p) => a + Number(p.value), 0),

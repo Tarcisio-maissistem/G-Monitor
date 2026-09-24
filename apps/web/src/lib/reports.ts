@@ -309,9 +309,14 @@ export interface PrevistoResponse {
 export interface ExtratoLinha { nsu: string; valor: number; data: string; hora: string; adquirente: string; bandeira: string; pdv: string; autorizacao: string }
 export interface PagamentoSistema { id: string; valor: number; data: string; hora: string; forma: string }
 export type EstadoConciliacao = 'conciliado' | 'so_no_extrato' | 'so_no_sistema';
+export interface QuemLancou {
+  operador: string | null; vendedor: string | null; caixa: string | null;
+  venda: string | null; hora: number | null; provavel: boolean;
+}
 export interface ItemConciliado {
   estado: EstadoConciliacao; data: string; valor: number;
   extrato?: ExtratoLinha; sistema?: PagamentoSistema; via?: 'direto' | 'outra_forma';
+  quem?: QuemLancou | null; // 24/09: operador que lancou (provavel quando so esta na maquininha)
 }
 export interface ConciliacaoDia { data: string; extratoQtd: number; extratoValor: number; sistemaQtd: number; sistemaValor: number; diferenca: number; completo: boolean }
 export interface ExtratoResponse {
