@@ -564,4 +564,37 @@ export async function agentSyncRoutes(app: FastifyInstance): Promise<void> {
     });
     return { states };
   });
+  // GET /api/agent/open-titles — a NUVEM diz quais titulos ela ainda considera em aberto, para o
+  // agente reler exatamente esses no Firebird (reconciliacao). Fecha o furo achado em 03/10: o sync
+  // e por `ID > checkpoint` e a baixa no GDOOR e UPDATE sem mudar o ID, entao conta paga com mais de
+  // RECENT_DAYS (7) de atraso nunca era revisitada e ficava "vencida" para sempre.
+  // Ver openspec/changes/reconciliacao-titulos-abertos/design.md (D1).
+  app.get('/api/agent/open-titles', async (req) => {
+    const ctx = await authenticateAgent(req.headers.authorization);
+    // teto por tabela: o ciclo seguinte pega o resto (convergencia, nao tudo de uma vez)
+    const LIMITE = 1000;
+    // 30 dias de folga cobrem baixa adiantada sem arrastar parcelamento longo (ha vencimento em 2055)
+    const horizonte = new Date();
+    horizonte.setUTCHours(0, 0, 0, 0);
+    horizonte.setUTCDate(horizonte.getUTCDate() + 30);
+
+    // `paidValue < value` e a MESMA condicao que financeList usa para nao classificar como 'paid'.
+    // Prisma nao compara duas colunas em `where`, por isso $queryRaw (igual financeList).
+    const abertos = async (table: 'payables' | 'receivables', settled: 'paidValue' | 'receivedValue') => {
+      const T = Prisma.raw(table);
+      const S = Prisma.raw(`"${settled}"`);
+      const rows = await prisma.$queryRaw<{ sourceId: string }[]>(Prisma.sql`
+        SELECT t."sourceId" FROM ${T} t
+        WHERE t."tenantId" = ${ctx.tenantId} AND t."storeId" = ${ctx.storeId}
+          AND t."cancelled" = false AND t.${S} < t."value" AND t."dueDate" <= ${horizonte}
+        ORDER BY t."dueDate" DESC LIMIT ${LIMITE}`);
+      return rows.map((r) => r.sourceId);
+    };
+
+    const [payables, receivables] = await Promise.all([
+      abertos('payables', 'paidValue'),
+      abertos('receivables', 'receivedValue'),
+    ]);
+    return { payables, receivables, limit: LIMITE };
+  });
 }
