@@ -288,6 +288,65 @@ export const CATALOG: Record<string, CatalogEntry> = {
       ORDER BY C.ID ASC
     `,
   },
+  // ─── Reconciliacao de titulos em aberto (change reconciliacao-titulos-abertos, D2/D3) ──────
+  // A nuvem manda os ids que ela ainda acha em aberto e estas consultas releem SO esses no GDOOR.
+  // E o unico caminho que corrige baixa dada DEPOIS da janela recente de 7 dias — e o unico que
+  // existe para a variante CONTAS_PAGAR, que nao tem consulta `recent` nenhuma.
+  // `{{IDS}}` e expandido por resolveReportComIds() para N placeholders `?`: os ids viajam como
+  // PARAMETRO posicional, nunca interpolados no SQL.
+  'reconcile-payables-pagar': {
+    id: 'reconcile-payables-pagar',
+    description: 'Rele contas a pagar (PAGAR) por lista de ids, para reconciliar baixa',
+    paramSchema: z.object({ ids: z.array(z.number().int().nonnegative()).min(1).max(200) }),
+    sql: `
+      SELECT P.ID AS SOURCE_ID, P.VENCIMENTO AS DUE_DATE, P.VALOR_DUP AS TOTAL_VALUE,
+             COALESCE(P.VALOR_PAG, 0) AS PAID_VALUE, P.PAGAMENTO AS PAID_DATE,
+             P.NOM_FORNECEDOR AS COUNTERPARTY, P.HISTORICO AS DESCRIPTION,
+             COALESCE(P.CANCELADA, 0) AS CANCELLED,
+             P.NUM_CONTA AS ACCOUNT_CODE, P.CTO_CUSTO AS COST_CENTER
+      FROM PAGAR P
+      WHERE P.ID IN ({{IDS}})
+    `,
+  },
+  'reconcile-payables-contas-pagar': {
+    id: 'reconcile-payables-contas-pagar',
+    description: 'Rele contas a pagar (CONTAS_PAGAR) por lista de ids, para reconciliar baixa',
+    paramSchema: z.object({ ids: z.array(z.number().int().nonnegative()).min(1).max(200) }),
+    sql: `
+      SELECT C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS TOTAL_VALUE,
+             COALESCE(C.VALOR_PAGO, 0) AS PAID_VALUE, C.DT_PAGTO AS PAID_DATE,
+             C.FORNECEDOR AS COUNTERPARTY, C.HISTORICO AS DESCRIPTION,
+             COALESCE(C.CANCELADA, 0) AS CANCELLED
+      FROM CONTAS_PAGAR C
+      WHERE C.ID IN ({{IDS}})
+    `,
+  },
+  'reconcile-receivables-receber': {
+    id: 'reconcile-receivables-receber',
+    description: 'Rele contas a receber (RECEBER) por lista de ids, para reconciliar baixa',
+    paramSchema: z.object({ ids: z.array(z.number().int().nonnegative()).min(1).max(200) }),
+    sql: `
+      SELECT R.ID AS SOURCE_ID, R.VENCIMENTO AS DUE_DATE, R.VALOR_DUP AS TOTAL_VALUE,
+             COALESCE(R.VALOR_REC, 0) AS RECEIVED_VALUE, R.RECEBIMENTO AS RECEIVED_DATE,
+             R.NOM_CLIENTE AS COUNTERPARTY, R.HISTORICO AS DESCRIPTION,
+             COALESCE(R.CANCELADA, 0) AS CANCELLED
+      FROM RECEBER R
+      WHERE R.ID IN ({{IDS}})
+    `,
+  },
+  'reconcile-receivables-contas-receber': {
+    id: 'reconcile-receivables-contas-receber',
+    description: 'Rele contas a receber (CONTAS_RECEBER) por lista de ids, para reconciliar baixa',
+    paramSchema: z.object({ ids: z.array(z.number().int().nonnegative()).min(1).max(200) }),
+    sql: `
+      SELECT C.ID AS SOURCE_ID, C.VENCIMENTO AS DUE_DATE, C.VALOR AS TOTAL_VALUE,
+             COALESCE(C.VALOR_RECEBIDO, 0) AS RECEIVED_VALUE, C.DT_RECEBIMENTO AS RECEIVED_DATE,
+             C.CLIENTE AS COUNTERPARTY, C.HISTORICO AS DESCRIPTION,
+             COALESCE(C.CANCELADA, 0) AS CANCELLED
+      FROM CONTAS_RECEBER C
+      WHERE C.ID IN ({{IDS}})
+    `,
+  },
   // FECHAMENTO_CAIXA / FECHAMENTO_CAIXA_ESPECIES — confirmadas no Firebird do piloto 26/08
   // (D20, Conferencia de Caixa). DATA+HORA separados no GDOOR: combinamos no agente.
   'sync-cash-closings-batch': {
@@ -505,4 +564,15 @@ export const CATALOG: Record<string, CatalogEntry> = {
 
 export function resolveReport(id: string): CatalogEntry | null {
   return CATALOG[id] ?? null;
+}
+
+// Expande o marcador {{IDS}} de uma consulta de reconciliacao em N placeholders `?`.
+// So o NUMERO de placeholders varia — nenhum valor entra no SQL, os ids vao como parametro
+// posicional. Mantem a regra do catalogo (allowlist) valendo. Ver design.md D2.
+export function resolveReportComIds(id: string, quantidadeDeIds: number): CatalogEntry | null {
+  const entry = resolveReport(id);
+  if (!entry || quantidadeDeIds < 1) return null;
+  if (!entry.sql.includes('{{IDS}}')) return entry;
+  const placeholders = Array.from({ length: quantidadeDeIds }, () => '?').join(', ');
+  return { ...entry, sql: entry.sql.replace('{{IDS}}', placeholders) };
 }

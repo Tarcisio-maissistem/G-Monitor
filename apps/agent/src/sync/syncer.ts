@@ -4,7 +4,7 @@ import type { AgentConfig } from '../config.js';
 import { getDataDir } from '../config.js';
 import { getFirebirdPool } from '../firebird/manager.js';
 import { getCheckpoint, setCheckpoint } from './checkpoint.js';
-import { resolveReport } from '../catalog/index.js';
+import { resolveReport, resolveReportComIds } from '../catalog/index.js';
 import { detectFinancialSchema } from '../firebird/schemaDetect.js';
 import { logger } from '../logger.js';
 import { AGENT_VERSION } from '../version.js';
@@ -418,6 +418,65 @@ async function syncRecent(cfg: AgentConfig, table: string, entryId: string, mapR
   const { persisted } = await postBatch(cfg, table, rows.map(mapRow), getCheckpoint(table) ?? '0', true);
   return persisted;
 }
+// ─── Reconciliacao de titulos em aberto (change reconciliacao-titulos-abertos) ────────────────
+// A nuvem diz quais titulos ela ainda ve em aberto; o agente rele SO esses no Firebird e reenvia.
+// Por que isto existe: o sync e `ID > checkpoint` e a baixa no GDOOR e UPDATE sem mudar o ID, logo
+// a janela recente (RECENT_DAYS=7, por VENCIMENTO/PAGAMENTO) e a unica chance de pegar o pagamento
+// — e ela perde toda conta paga com mais de 7 dias de atraso. Achado em 03/10/2026 no J.Kastros:
+// 20 contas a pagar e 111 a receber marcadas como vencidas depois de pagas (CARVAO, PALHOL).
+const RECONCILE_CHUNK = 200; // ids por consulta: o Firebird limita parametros por statement
+
+async function reconciliarAbertos(cfg: AgentConfig, emDia: Record<string, boolean>): Promise<void> {
+  const pool = getFirebirdPool();
+  if (!pool) return;
+  const schema = await detectFinancialSchema(pool);
+  if (!schema) return;
+  // a variante decide a consulta — e o que da cobertura ao CONTAS_PAGAR, que nao tem `recent`
+  const entryDe: Record<string, { payables: string; receivables: string }> = {
+    pagar_receber: { payables: 'reconcile-payables-pagar', receivables: 'reconcile-receivables-receber' },
+    contas_pagar_receber: { payables: 'reconcile-payables-contas-pagar', receivables: 'reconcile-receivables-contas-receber' },
+  };
+  const entries = entryDe[schema];
+  if (!entries) return;
+
+  let abertos: { payables?: string[]; receivables?: string[] };
+  try {
+    const res = await fetch(`${cfg.saasUrl}/api/agent/open-titles`, {
+      headers: { Authorization: `Bearer ${cfg.token}`, 'x-agent-version': AGENT_VERSION },
+    });
+    if (!res.ok) throw new Error(`open-titles ${res.status}`);
+    abertos = (await res.json()) as { payables?: string[]; receivables?: string[] };
+  } catch (err) {
+    logger.warn({ err }, 'reconciliacao: nao consegui a lista de titulos abertos (segue no proximo tick)');
+    return;
+  }
+
+  for (const table of ['payables', 'receivables'] as const) {
+    if (!emDia[table]) continue;                      // ainda em backfill: nao concorrer com ele
+    if (!podeRodarRecente(`reconcile:${table}`)) continue;
+    const ids = (abertos[table] ?? []).map(Number).filter((n) => Number.isFinite(n));
+    if (ids.length === 0) continue;
+    const mapRow: (r: any) => unknown = table === 'payables' ? mapPayable : mapReceivable;
+    let reenviadas = 0;
+    try {
+      for (let i = 0; i < ids.length; i += RECONCILE_CHUNK) {
+        const lote = ids.slice(i, i + RECONCILE_CHUNK);
+        const entry = resolveReportComIds(entries[table], lote.length);
+        if (!entry) break;
+        const rows = await pool.query<Record<string, unknown>>(entry.sql, lote);
+        if (rows.length === 0) continue;
+        // recent=true: upsert por sourceId, sem mexer no checkpoint do backfill
+        const { persisted } = await postBatch(cfg, table, rows.map(mapRow), getCheckpoint(table) ?? '0', true);
+        reenviadas += persisted;
+      }
+      setCheckpoint(`recent:reconcile:${table}`, String(Date.now()));
+      if (reenviadas > 0) logger.info({ table, reenviadas, pedidos: ids.length }, 'reconciliacao de titulos abertos');
+    } catch (err) {
+      logger.warn({ err, table }, 'reconciliacao falhou (segue no proximo tick)');
+    }
+  }
+}
+
 async function janelaRecente(cfg: AgentConfig, emDia: Record<string, boolean>): Promise<void> {
   const since = desdeRecente();
   const plano: Array<[string, string, (r: any) => unknown, unknown[]]> = [
@@ -627,6 +686,7 @@ async function tick(cfg: AgentConfig): Promise<void> {
         logger.warn({ err }, 'sync da auditoria falhou (segue no proximo ciclo)');
       }
       await janelaRecente(cfg, emDia);
+      await reconciliarAbertos(cfg, emDia);
     } finally {
       running = false;
     }
