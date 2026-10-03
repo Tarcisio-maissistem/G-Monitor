@@ -19,6 +19,10 @@ for (const dir of ['apps/web/public/downloads', 'apps/web/dist/downloads']) {
   if (!fs.existsSync(d)) continue;
   fs.copyFileSync(exe, path.join(d, 'gmonitor-agent.exe'));
   fs.copyFileSync(path.join(root, 'apps/agent/installer/install.ps1'), path.join(d, 'install.ps1'));
+  // Publica tambem o atualizador-so-do-binario (change updater-loop-download, 03/10/2026).
+  // E o que tira da estacao as versoes <= 0.9.12, que carregam o updater velho e nao conseguem
+  // se atualizar sozinhas. Tem de ficar aqui para o one-liner `iwr ... | iex` funcionar.
+  fs.copyFileSync(path.join(root, 'apps/agent/installer/atualizar-agente.ps1'), path.join(d, 'atualizar-agente.ps1'));
   fs.writeFileSync(path.join(d, 'latest.json'), JSON.stringify(manifest, null, 2));
   console.log('latest.json ->', dir, version);
 }
