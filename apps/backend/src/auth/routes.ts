@@ -2,22 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Errors } from '@gmonitor/shared';
 import { prisma } from '../db/prisma.js';
-import { hashPassword, verifyPassword } from './passwords.js';
+import { verifyPassword } from './passwords.js';
 import { signAccess, signRefresh, verifyRefresh } from './jwt.js';
 import { generateRandomToken, hashToken } from './tokens.js';
 import { verifyTotp } from './totp.js';
 import { config } from '../config.js';
-import { logger } from '../logger.js';
-
-const signupSchema = z.object({
-  tenantName: z.string().min(2).max(120),
-  // CNPJ obrigatorio: e a chave que o instalador usa pra achar a empresa e pedir o token
-  // do agente (POST /api/agents/register-by-cnpj) — pedido do dono 24/08.
-  cnpj: z.string().min(14),
-  email: z.string().email(),
-  name: z.string().min(2),
-  password: z.string().min(12),
-});
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -26,48 +15,12 @@ const loginSchema = z.object({
 });
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  // Autocadastro pelo login (pedido do dono 24/08): cria tenant + loja padrao + owner,
-  // MAS fica pendingApproval=true — agente ate registra token (register-by-cnpj), mas
-  // WS/sync ficam bloqueados ate o super-admin aprovar. Notificacao criada aqui pra
-  // aparecer no sino do painel do super-admin.
-  app.post('/api/auth/signup', async (req, reply) => {
-    const body = signupSchema.parse(req.body);
-
-    const existing = await prisma.tenant.findFirst({ where: { cnpj: body.cnpj } });
-    if (existing) throw Errors.conflict('CNPJ ja cadastrado');
-
-    const passwordHash = await hashPassword(body.password);
-    const tenant = await prisma.tenant.create({
-      data: {
-        name: body.tenantName,
-        cnpj: body.cnpj,
-        pendingApproval: true,
-        users: {
-          create: {
-            email: body.email,
-            name: body.name,
-            passwordHash,
-            role: 'owner',
-          },
-        },
-        stores: {
-          create: { name: body.tenantName, externalId: 'loja-01' },
-        },
-        notifications: {
-          create: {
-            type: 'signup_pending',
-            title: 'Nova empresa aguardando aprovação',
-            body: `${body.tenantName} se cadastrou pelo login e está esperando você autorizar.`,
-          },
-        },
-      },
-      include: { users: true },
-    });
-
-    logger.info({ tenantId: tenant.id }, 'tenant created (pending approval)');
-    reply.status(201).send({ tenantId: tenant.id, ownerId: tenant.users[0]!.id, pendingApproval: true });
-  });
-
+  // v2026-10-24 — O AUTOCADASTRO PUBLICO FOI REMOVIDO (decisao do dono 24/10).
+  // `POST /api/auth/signup` criava empresa + usuario SEM login nenhum; em 21/10 uma rodada
+  // de QA usou essa porta e criou 5 empresas que o dono nao reconheceu. Criar empresa agora
+  // so por `POST /api/admin/tenants` (requireSuperAdmin + auditoria). Nao virou rota
+  // bloqueada por papel de proposito: dois caminhos de criacao divergiriam de novo.
+  // Change: openspec/changes/fechar-autocadastro-empresa/
   app.post('/api/auth/login', async (req, reply) => {
     const body = loginSchema.parse(req.body);
 
